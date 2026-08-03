@@ -90,13 +90,30 @@ export function daysSince(dateStr: string): number {
   return Math.max(0, Math.floor((now.getTime() - d.getTime()) / 86400000))
 }
 
-// ---- v3: sinais técnicos ----
+// ---- v3/v4: sinais técnicos ----
 export type Signal = {
   price: number; rsi: number | null
   sma20: number; sma50: number; sma200: number
   high52: number; low52: number; rangePos: number
   support: number; resistance: number
-  rating: { score: number; label: string }
-  region: { label: string; tone: 'buy' | 'sell' | 'neutral' }
   maAbove: number
+  verdict: { label: string; tone: 'buy' | 'sell' | 'neutral'; text: string }
+  rsiHint: string; rangeHint: string; maHint: string
+}
+
+
+// ---- v4: pools de liquidez ----
+export type Pool = {
+  id?: string; user_id?: string
+  par1: string; par1_cg_id: string; par2: string
+  dapp: string; rede: string; link: string
+  aporte: number; current_value: number
+  low_range: number; high_range: number
+  entry_date: string; fees: number
+}
+export const DEFAULT_POOL: Omit<Pool, 'id' | 'user_id'> = {
+  par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base',
+  link: 'https://app.uniswap.org/positions/v3/base/3831528',
+  aporte: 2771.29, current_value: 1361.53, low_range: 3487.69, high_range: 4978.96,
+  entry_date: '2025-08-30', fees: 13.19,
 }

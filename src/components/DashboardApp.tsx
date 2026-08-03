@@ -4,47 +4,52 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
 import {
-  Holding, Flow, Transaction, Live, DEFAULT_HOLDINGS, POOL_INFO, BRL_RATE, DEFAULT_APORTES,
-  value as valOf, usd, pct, brl, fmt, daysSince, Signal,
+  Holding, Flow, Transaction, Pool, Signal, DEFAULT_HOLDINGS, DEFAULT_POOL, BRL_RATE, DEFAULT_APORTES,
+  value as valOf, usd, pct, brl, fmt, daysSince,
 } from '@/lib/data'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'pools' | 'aportes' | 'metas'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
-const num = (v: string) => parseFloat(v.replace(',', '.')) || 0
+const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
 
 export default function DashboardApp({
-  userEmail, initialHoldings, initialFlows, initialTx,
-}: { userEmail: string; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[] }) {
+  userEmail, initialHoldings, initialFlows, initialTx, initialPools,
+}: { userEmail: string; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[] }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [holdings, setHoldings] = useState<Holding[]>(initialHoldings)
   const [flows, setFlows] = useState<Flow[]>(initialFlows)
   const [txs, setTxs] = useState<Transaction[]>(initialTx)
+  const [pools, setPools] = useState<Pool[]>(initialPools)
   const [tab, setTab] = useState<Tab>('inicio')
-  const [live, setLive] = useState<Record<string, Live>>({})
-  const [brlRate, setBrlRate] = useState<{ tether: number; usdc: number }>({ tether: BRL_RATE, usdc: BRL_RATE })
+  const [live, setLive] = useState<Record<string, any>>({})
+  const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
+  const [signals, setSignals] = useState<Record<string, Signal>>({})
   const [userId, setUserId] = useState('')
   const [detail, setDetail] = useState<Holding | null>(null)
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
+  const [poolForm, setPoolForm] = useState<any | null>(null)
   const [mvType, setMvType] = useState<'in' | 'out'>('in')
   const [mvVal, setMvVal] = useState('')
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
   const refetch = useCallback(async () => {
-    const [h, f, t] = await Promise.all([
+    const [h, f, t, p] = await Promise.all([
       supabase.from('holdings').select('*').order('sort', { ascending: true }),
       supabase.from('flows').select('*').order('created_at', { ascending: false }),
       supabase.from('transactions').select('*').order('buy_date', { ascending: true }),
+      supabase.from('pools').select('*').order('created_at', { ascending: true }),
     ])
     if (h.data) setHoldings(h.data as Holding[])
     if (f.data) setFlows(f.data as Flow[])
     if (t.data) setTxs(t.data as Transaction[])
+    if (p.data) setPools(p.data as Pool[])
   }, [supabase])
 
-  // seed ÚNICO (gated por flag no banco) — corrige o bug de reaparecer/apagar dados
+  // seed ÚNICO (gated por flag) — nunca reinjeta
   const seededRef = useRef(false)
   useEffect(() => {
     if (!userId || seededRef.current) return
@@ -53,13 +58,14 @@ export default function DashboardApp({
       const { data: st } = await supabase.from('app_state').select('seeded').eq('user_id', userId).maybeSingle()
       if (st?.seeded) return
       if (holdings.length === 0) {
-        await supabase.from('holdings').insert(DEFAULT_HOLDINGS.map(r => ({ ...r, user_id: userId })))
+        await supabase.from('holdings').insert(DEFAULT_HOLDINGS.filter(r => r.kind !== 'pool').map(r => ({ ...r, user_id: userId })))
         const cs = DEFAULT_HOLDINGS.filter(r => r.kind === 'crypto')
         await supabase.from('transactions').insert(cs.map(r => ({
           user_id: userId, symbol: r.symbol, name: r.name, cg_id: r.cg_id, color: r.color,
           rede: 'BASE', corretora: 'METAMASK', carteira: 'METAMASK', buy_date: '2025-06-27',
           qty: r.qty, buy_price: r.qty ? r.invested / r.qty : 0, stop_limit: 0, target: 0, meta_pct: r.meta_pct,
         })))
+        await supabase.from('pools').insert({ ...DEFAULT_POOL, user_id: userId })
       } else if (txs.length === 0) {
         const cs = holdings.filter(h => h.kind === 'crypto')
         if (cs.length > 0) await supabase.from('transactions').insert(cs.map(h => ({
@@ -73,52 +79,61 @@ export default function DashboardApp({
     })()
   }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // sinais técnicos (RSI/SMA/52sem/suporte-resistência)
-  const [signals, setSignals] = useState<Record<string, Signal>>({})
+  // migração: pool antiga (holding) -> tabela pools (auto-encerra)
   useEffect(() => {
-    const ids = Array.from(new Set(holdings.filter(h => h.kind === 'crypto' && h.cg_id).map(h => h.cg_id)))
+    if (!userId) return
+    const poolHolding = holdings.find(h => h.kind === 'pool')
+    if (pools.length === 0 && poolHolding) {
+      (async () => {
+        await supabase.from('pools').insert({ ...DEFAULT_POOL, aporte: poolHolding.invested, current_value: poolHolding.current_value ?? DEFAULT_POOL.current_value, user_id: userId })
+        if (poolHolding.id) await supabase.from('holdings').delete().eq('id', poolHolding.id)
+        await refetch()
+      })()
+    }
+  }, [userId, pools.length, holdings, supabase, refetch])
+
+  // cotação ao vivo
+  useEffect(() => {
+    const ids = holdings.filter(h => h.cg_id).map(h => h.cg_id)
+    const poolIds = pools.map(p => p.par1_cg_id)
+    const all = Array.from(new Set([...ids, ...poolIds, 'tether', 'usd-coin'])).join(',')
+    let active = true
+    const load = () => fetch(`/api/prices?ids=${all}`).then(r => r.json()).then(d => {
+      if (!active) return
+      setLive(d.coins || {}); setBrlRate({ tether: d.brl?.tether || BRL_RATE, usdc: d.brl?.['usd-coin'] || BRL_RATE })
+    }).catch(() => {})
+    load(); const t = setInterval(load, 60000)
+    return () => { active = false; clearInterval(t) }
+  }, [holdings, pools])
+
+  // sinais técnicos
+  useEffect(() => {
+    const ids = uniq(holdings.filter(h => h.kind === 'crypto' && h.cg_id).map(h => h.cg_id))
     if (!ids.length) return
     let active = true
     fetch(`/api/signals?ids=${ids.join(',')}`).then(r => r.json()).then(d => { if (active) setSignals(d || {}) }).catch(() => {})
     return () => { active = false }
   }, [holdings])
 
-  // cotação ao vivo (markets + BRL)
-  useEffect(() => {
-    const ids = Array.from(new Set(holdings.filter(h => h.cg_id).map(h => h.cg_id)))
-    const withStable = Array.from(new Set([...ids, 'tether', 'usd-coin'])).join(',')
-    let active = true
-    const load = () => fetch(`/api/prices?ids=${withStable}`).then(r => r.json()).then(d => {
-      if (!active) return
-      setLive(d.coins || {})
-      setBrlRate({ tether: d.brl?.tether || BRL_RATE, usdc: d.brl?.['usd-coin'] || BRL_RATE })
-    }).catch(() => {})
-    load()
-    const t = setInterval(load, 60000)
-    return () => { active = false; clearInterval(t) }
-  }, [holdings])
-
-  const ph = useCallback((h: Holding): Holding =>
-    (h.cg_id && live[h.cg_id]?.usd) ? { ...h, price: live[h.cg_id].usd } : h, [live])
+  const ph = useCallback((h: Holding): Holding => (h.cg_id && live[h.cg_id]?.usd) ? { ...h, price: live[h.cg_id].usd } : h, [live])
   const priced = useMemo(() => holdings.map(ph), [holdings, ph])
+  const poolsVal = useMemo(() => pools.reduce((s, p) => s + p.current_value, 0), [pools])
+  const poolsInv = useMemo(() => pools.reduce((s, p) => s + p.aporte, 0), [pools])
 
   const t = useMemo(() => {
     const sum = (a: Holding[]) => a.reduce((s, h) => s + valOf(h), 0)
     const inv = (a: Holding[]) => a.reduce((s, h) => s + h.invested, 0)
     const crypto = priced.filter(h => h.kind === 'crypto'), stock = priced.filter(h => h.kind === 'stock')
-    const cash = priced.filter(h => h.kind === 'cash'), pool = priced.filter(h => h.kind === 'pool')
-    const risk = priced.filter(h => ['crypto', 'stock', 'pool'].includes(h.kind))
-    return {
-      patr: sum(priced), criptoVal: sum(crypto) + sum(stock), criptoInv: inv(crypto) + inv(stock),
-      cashVal: sum(cash), poolVal: sum(pool), poolInv: inv(pool),
-      totalInv: inv(risk) + inv(cash), aportTotal: inv(risk) + inv(cash),
-      pl: sum(risk) - inv(risk), riskInv: inv(risk),
-    }
-  }, [priced])
+    const cash = priced.filter(h => h.kind === 'cash')
+    const criptoVal = sum(crypto) + sum(stock), criptoInv = inv(crypto) + inv(stock)
+    const cashVal = sum(cash)
+    const riskInv = criptoInv + poolsInv, riskVal = criptoVal + poolsVal
+    return { patr: criptoVal + cashVal + poolsVal, criptoVal, criptoInv, cashVal, riskInv, pl: riskVal - riskInv, totalInv: riskInv + inv(cash), aportTotal: riskInv + inv(cash) }
+  }, [priced, poolsVal, poolsInv])
 
   const plpct = t.riskInv ? (t.pl / t.riskInv) * 100 : 0
   const criptoPl = t.criptoInv ? ((t.criptoVal - t.criptoInv) / t.criptoInv) * 100 : 0
-  const poolPl = t.poolInv ? ((t.poolVal - t.poolInv) / t.poolInv) * 100 : 0
+  const poolPl = poolsInv ? ((poolsVal - poolsInv) / poolsInv) * 100 : 0
 
   const cats = useMemo(() => {
     const bs = (s: string) => priced.filter(h => h.symbol === s).reduce((a, h) => a + valOf(h), 0)
@@ -128,14 +143,13 @@ export default function DashboardApp({
       { n: 'Solana', v: bs('SOL'), c: '#22D3EE' }, { n: 'Altcoins', v: other, c: '#C77DFF' },
       { n: 'Ações', v: priced.filter(h => h.kind === 'stock').reduce((a, h) => a + valOf(h), 0), c: '#7C5CFF' },
       { n: 'Caixa', v: priced.filter(h => h.kind === 'cash').reduce((a, h) => a + valOf(h), 0), c: '#9D7CFF' },
-      { n: 'Pools', v: priced.filter(h => h.kind === 'pool').reduce((a, h) => a + valOf(h), 0), c: '#2BFFC6' },
+      { n: 'Pools', v: poolsVal, c: '#2BFFC6' },
     ].filter(x => x.v > 0)
-  }, [priced])
+  }, [priced, poolsVal])
   const donutTot = cats.reduce((s, x) => s + x.v, 0) || 1
   let off = 0
   const segs = cats.map((x, i) => { const p = x.v / donutTot * 100; const s = (<circle key={i} cx="21" cy="21" r="15.915" fill="transparent" stroke={x.c} strokeWidth="5.5" strokeDasharray={`${p} ${100 - p}`} strokeDashoffset={25 - off} />); off += p; return s })
 
-  // ---- recompute holding from its transactions ----
   const recompute = useCallback(async (symbol: string, name: string, cg: string, color: string, meta: number) => {
     const { data } = await supabase.from('transactions').select('*').eq('symbol', symbol)
     const list = (data || []) as Transaction[]
@@ -148,52 +162,39 @@ export default function DashboardApp({
   }, [supabase, holdings, userId])
 
   async function saveBuy() {
-    if (!txForm) return
-    const f = txForm
-    const payload = {
-      user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name || f.symbol, cg_id: f.cg_id, color: f.color || '#A855F7',
-      rede: f.rede, corretora: f.corretora, carteira: f.carteira, buy_date: f.buy_date,
-      qty: num(String(f.qty)), buy_price: num(String(f.buy_price)), stop_limit: num(String(f.stop_limit)), target: num(String(f.target)), meta_pct: num(String(f.meta_pct)),
-    }
+    const f = txForm; if (!f) return
+    const payload = { user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name || f.symbol, cg_id: f.cg_id, color: f.color || '#A855F7', rede: f.rede, corretora: f.corretora, carteira: f.carteira, buy_date: f.buy_date, qty: num(f.qty), buy_price: num(f.buy_price), stop_limit: num(f.stop_limit), target: num(f.target), meta_pct: num(f.meta_pct) }
     await supabase.from('transactions').insert(payload)
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, payload.meta_pct)
     setTxForm(null); setDetail(null); await refetch()
   }
-  async function delTx(id: string, h: Holding) {
-    await supabase.from('transactions').delete().eq('id', id)
-    await recompute(h.symbol, h.name, h.cg_id, h.color, h.meta_pct)
-    await refetch()
+  async function delTx(id: string, h: Holding) { await supabase.from('transactions').delete().eq('id', id); await recompute(h.symbol, h.name, h.cg_id, h.color, h.meta_pct); await refetch() }
+  async function delAsset(h: Holding) { await supabase.from('transactions').delete().eq('symbol', h.symbol); if (h.id) await supabase.from('holdings').delete().eq('id', h.id); setDetail(null); await refetch() }
+  async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: editDraft.current_value }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
+  async function addFlow() { const v = num(mvVal); if (v <= 0) return; await supabase.from('flows').insert({ user_id: userId, kind: mvType, amount: v }); setMvVal(''); await refetch() }
+  async function savePool() {
+    const f = poolForm; if (!f) return
+    const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, fees: num(f.fees) }
+    if (f.id) await supabase.from('pools').update(payload).eq('id', f.id)
+    else await supabase.from('pools').insert(payload)
+    setPoolForm(null); await refetch()
   }
-  async function delAsset(h: Holding) {
-    await supabase.from('transactions').delete().eq('symbol', h.symbol)
-    if (h.id) await supabase.from('holdings').delete().eq('id', h.id)
-    setDetail(null); await refetch()
-  }
-  async function saveEdit() {
-    if (!editDraft?.id) return
-    await supabase.from('holdings').update({ current_value: editDraft.current_value, invested: editDraft.invested }).eq('id', editDraft.id)
-    setEditDraft(null); await refetch()
-  }
-  async function addFlow() {
-    const v = num(mvVal); if (v <= 0) return
-    await supabase.from('flows').insert({ user_id: userId, kind: mvType, amount: v }); setMvVal(''); await refetch()
-  }
+  async function delPool(id: string) { await supabase.from('pools').delete().eq('id', id); setPoolForm(null); await refetch() }
   async function signOut() { await supabase.auth.signOut(); router.push('/login') }
 
   const usdSplit = (n: number) => { const s = usd(n); const i = s.lastIndexOf(','); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i)] }
   const [hi, cent] = usdSplit(t.patr); const res = t.patr - t.aportTotal
-  const extraIn = flows.filter(f => f.kind === 'in').reduce((s, f) => s + f.amount, 0)
-  const extraOut = flows.filter(f => f.kind === 'out').reduce((s, f) => s + f.amount, 0)
-  const tin = DEFAULT_APORTES.in + extraIn, tout = DEFAULT_APORTES.out + extraOut, net = tin - tout
-  const apPl = net ? ((t.patr * brlRate.tether - net) / net) * 100 : 0
-
+  const tin = DEFAULT_APORTES.in + flows.filter(f => f.kind === 'in').reduce((s, f) => s + f.amount, 0)
+  const tout = DEFAULT_APORTES.out + flows.filter(f => f.kind === 'out').reduce((s, f) => s + f.amount, 0)
+  const net = tin - tout, apPl = net ? ((t.patr * brlRate.tether - net) / net) * 100 : 0
   const cryptoHoldings = priced.filter(h => h.kind === 'crypto' || h.kind === 'stock').slice().sort((a, b) => valOf(b) - valOf(a))
+  const chColor = (v: any) => v == null ? 'var(--muted)' : v >= 0 ? 'var(--green)' : 'var(--red)'
+  const chTxt = (v: any) => v == null ? '—' : pct(v)
+
   const openBuy = (h: Holding | null) => setTxForm(h
     ? { symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, meta_pct: h.meta_pct, rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: live[h.cg_id]?.usd ?? h.price, stop_limit: '', target: '', isNew: false }
     : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true })
-
-  const chColor = (v: number | null | undefined) => v == null ? 'var(--muted)' : v >= 0 ? 'var(--green)' : 'var(--red)'
-  const chTxt = (v: number | null | undefined) => v == null ? '—' : pct(v)
+  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '' })
 
   return (
     <>
@@ -217,18 +218,14 @@ export default function DashboardApp({
                 <div className="hero-mini"><div className="k">Resultado</div><div className={`v num ${res >= 0 ? 'up' : 'down'}`}>{(res >= 0 ? '+' : '-') + usd(Math.abs(res)).slice(1)}</div></div>
               </div>
             </div>
-            <div className="card section-gap">
-              <div className="eyebrow">Alocação atual</div>
-              <div className="donut-wrap">
-                <div className="donut"><svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="15.915" fill="transparent" stroke="rgba(255,255,255,.05)" strokeWidth="5.5" />{segs}</svg><div className="center"><small>Total</small><b className="num">${fmt(donutTot, 0)}</b></div></div>
-                <div className="legend">{cats.map((x, i) => (<div className="leg" key={i}><span className="dot" style={{ background: x.c, color: x.c }} /><span>{x.n}</span><span className="lpct">{fmt(x.v / donutTot * 100, 1)}%</span></div>))}</div>
-              </div>
-            </div>
+            <div className="card section-gap"><div className="eyebrow">Alocação atual</div>
+              <div className="donut-wrap"><div className="donut"><svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="15.915" fill="transparent" stroke="rgba(255,255,255,.05)" strokeWidth="5.5" />{segs}</svg><div className="center"><small>Total</small><b className="num">${fmt(donutTot, 0)}</b></div></div>
+                <div className="legend">{cats.map((x, i) => (<div className="leg" key={i}><span className="dot" style={{ background: x.c, color: x.c }} /><span>{x.n}</span><span className="lpct">{fmt(x.v / donutTot * 100, 1)}%</span></div>))}</div></div></div>
             <div className="eyebrow section-gap">Blocos</div>
             <div className="trio">
               <div className="stat"><div className="k">Cripto/Ações</div><div className="v num">{usd(t.criptoVal)}</div><div className={`s num ${criptoPl >= 0 ? 'up' : 'down'}`}>{pct(criptoPl)}</div></div>
               <div className="stat"><div className="k">Caixa</div><div className="v num">{usd(t.cashVal)}</div><div className="s" style={{ color: 'var(--muted)' }}>reserva</div></div>
-              <div className="stat"><div className="k">Pools</div><div className="v num">{usd(t.poolVal)}</div><div className={`s num ${poolPl >= 0 ? 'up' : 'down'}`}>{pct(poolPl)}</div></div>
+              <div className="stat"><div className="k">Pools</div><div className="v num">{usd(poolsVal)}</div><div className={`s num ${poolPl >= 0 ? 'up' : 'down'}`}>{pct(poolPl)}</div></div>
             </div>
           </section>
 
@@ -238,61 +235,60 @@ export default function DashboardApp({
             {cryptoHoldings.map(h => {
               const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
               const real = t.patr ? v / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1)
-              return (
-                <div className="asset" key={h.id} onClick={() => setDetail(holdings.find(x => x.id === h.id)!)}>
-                  <div className="sym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
-                  <div className="a-main"><div className="a-name">{h.name}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
-                    <div className="metabar"><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div>
-                  </div>
-                  <div className="a-right"><div className="a-val">{usd(v)}</div><div className={`a-pl ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</div></div>
-                </div>
-              )
+              return (<div className="asset" key={h.id} onClick={() => setDetail(holdings.find(x => x.id === h.id)!)}>
+                <div className="sym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
+                <div className="a-main"><div className="a-name">{h.name}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
+                  <div className="metabar"><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>
+                <div className="a-right"><div className="a-val">{usd(v)}</div><div className={`a-pl ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</div></div></div>)
             })}
             <button className="addbtn" onClick={() => openBuy(null)}>+ registrar compra / novo ativo</button>
-            <div className="card section-gap">
-              {holdings.filter(h => h.kind === 'cash' || h.kind === 'pool').map(h => (
-                <div className="kv" key={h.id} onClick={() => setEditDraft({ ...h })} style={{ cursor: 'pointer' }}>
-                  <span className="k">{h.name}</span><span className="v num">{usd(h.current_value ?? 0)}</span>
-                </div>
-              ))}
-            </div>
+            <div className="card section-gap">{holdings.filter(h => h.kind === 'cash').map(h => (<div className="kv" key={h.id} onClick={() => setEditDraft({ ...h })} style={{ cursor: 'pointer' }}><span className="k">{h.name}</span><span className="v num">{usd(h.current_value ?? 0)}</span></div>))}</div>
           </section>
 
           {/* COTAÇÃO */}
           <section className={`screen ${tab === 'cotacao' ? 'active' : ''}`}>
             <div className="eyebrow">Cotação ao vivo · CoinGecko</div>
-            {priced.filter(h => h.kind === 'crypto' && h.cg_id).sort((a, b) => valOf(b) - valOf(a)).map(h => {
-              const L = live[h.cg_id]
-              return (
-                <div className="qrow" key={h.id}>
-                  <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>
-                    {L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}
-                  </div>
-                  <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].region.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].region.tone === 'buy' ? '▼ Compra' : signals[h.cg_id].region.tone === 'sell' ? '▲ Venda' : '• Neutro'}</span>)}</div>
-                  <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
-                </div>
-              )
-            })}
+            {priced.filter(h => h.kind === 'crypto' && h.cg_id).sort((a, b) => valOf(b) - valOf(a)).map(h => { const L = live[h.cg_id]; return (
+              <div className="qrow" key={h.id}>
+                <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}</div>
+                <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▼ Compra' : signals[h.cg_id].verdict.tone === 'sell' ? '▲ Venda' : '• Observar'}</span>)}</div>
+                <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
+              </div>) })}
             <div className="qsection">Câmbio (R$)</div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#158f6f)' }}>USD</div><div className="qname"><b>Dólar</b><span>USD / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#26A17B,#0f6b4f)' }}>USDT</div><div className="qname"><b>Tether</b><span>USDT / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2775CA,#164a80)' }}>USDC</div><div className="qname"><b>USD Coin</b><span>USDC / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.usdc)}</div></div></div>
-            <p className="foot-note">Novos ativos comprados aparecem aqui automaticamente. Preços atualizam a cada 60s.</p>
           </section>
 
           {/* POOLS */}
           <section className={`screen ${tab === 'pools' ? 'active' : ''}`}>
-            {holdings.filter(h => h.kind === 'pool').map(h => {
-              const cur = h.current_value ?? 0, pnl = cur - h.invested, pnlp = h.invested ? pnl / h.invested * 100 : 0
-              return (
-                <div key={h.id}>
-                  <div className="hero"><div className="hero-label">{POOL_INFO.dapp} · {POOL_INFO.pair}</div><div className="hero-value num" style={{ fontSize: 32 }}>{usd(cur)}</div><span className={`pill ${pnl >= 0 ? 'up' : 'down'}`}>{pnl >= 0 ? '▲' : '▼'} {pct(pnlp)}</span>
-                    <div className="chips"><span className="chip">rede <b>{POOL_INFO.chain}</b></span><span className="chip">entrada <b>{POOL_INFO.entry}</b></span><span className="chip">taxa <b>1%</b></span></div></div>
-                  <div className="card section-gap"><div className="kv"><span className="k">Aporte</span><span className="v num">{usd(h.invested)}</span></div><div className="kv"><span className="k">Saldo atual</span><span className="v num">{usd(cur)}</span></div><div className="kv"><span className="k">PNL</span><span className={`v num ${pnl >= 0 ? 'up' : 'down'}`}>{(pnl >= 0 ? '+' : '-') + usd(Math.abs(pnl)).slice(1)}</span></div><div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{usd(POOL_INFO.fees)}</span></div><div className="kv"><span className="k">Faixa</span><span className="v num">{fmt(POOL_INFO.low)} – {fmt(POOL_INFO.high)}</span></div><div className="kv"><span className="k">Dias</span><span className="v num">{POOL_INFO.days}</span></div></div>
-                  <div className="card gauge-card section-gap"><div className="eyebrow" style={{ marginBottom: 2 }}>Meta 1% ao dia</div><Gauge val={POOL_INFO.retDay} /><div className="chips" style={{ justifyContent: 'center' }}><span className="chip">APR mês <b>{fmt(POOL_INFO.aprMonth)}%</b></span><span className="chip">APR ano <b>{fmt(POOL_INFO.aprYear)}%</b></span></div></div>
+            <div className="eyebrow">Minhas pools de liquidez</div>
+            {pools.map(p => {
+              const price = live[p.par1_cg_id]?.usd ?? 0
+              const below = price > 0 && p.low_range > 0 && price < p.low_range
+              const above = price > 0 && p.high_range > 0 && price > p.high_range
+              const inRange = price > 0 && !below && !above && p.low_range > 0
+              const pnl = p.current_value - p.aporte, pnlp = p.aporte ? pnl / p.aporte * 100 : 0
+              const dias = daysSince(p.entry_date), apr = p.aporte && dias > 0 ? p.fees / p.aporte / dias * 365 * 100 : 0
+              const pos = (price > 0 && p.high_range > p.low_range) ? Math.min(100, Math.max(0, (price - p.low_range) / (p.high_range - p.low_range) * 100)) : 50
+              return (<div className="poolcard" key={p.id}>
+                <div className="poolhead"><div className="poolpair">{p.par1}/{p.par2}</div><div className="poolt"><b>{p.par1} / {p.par2}</b><span>{p.dapp} · {p.rede}</span></div>
+                  <div style={{ textAlign: 'right' }}><div className="num" style={{ fontWeight: 700, fontSize: 15 }}>{usd(p.current_value)}</div><div className={`num ${pnl >= 0 ? 'up' : 'down'}`} style={{ fontSize: 12 }}>{pct(pnlp)}</div></div></div>
+                <div className={`rangestatus ${inRange ? 'rs-in' : 'rs-out'}`}>{inRange ? '✓ DENTRO DA FAIXA · gerando taxas' : below ? `▼ FORA — abaixo da faixa · sem taxas` : above ? `▲ FORA — acima da faixa · sem taxas` : 'faixa não definida'}</div>
+                <div className="poolrange"><div className="curp" style={{ left: `${pos}%` }} /></div>
+                <div className="poolrangelbl"><span>low {fmt(p.low_range)}</span><span>{price > 0 ? `atual ${fmt(price)}` : ''}</span><span>high {fmt(p.high_range)}</span></div>
+                <div style={{ marginTop: 10 }}>
+                  <div className="kv"><span className="k">Aporte</span><span className="v num">{usd(p.aporte)}</span></div>
+                  <div className="kv"><span className="k">Saldo atual</span><span className="v num">{usd(p.current_value)}</span></div>
+                  <div className="kv"><span className="k">PNL</span><span className={`v num ${pnl >= 0 ? 'up' : 'down'}`}>{(pnl >= 0 ? '+' : '-') + usd(Math.abs(pnl)).slice(1)}</span></div>
+                  <div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{usd(p.fees)}</span></div>
+                  <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
+                  <div className="kv"><span className="k">Dias</span><span className="v num">{dias}</span></div>
                 </div>
-              )
+                <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>
+              </div>)
             })}
+            <button className="addbtn" onClick={() => openPool(null)}>+ nova pool</button>
           </section>
 
           {/* APORTES */}
@@ -317,7 +313,7 @@ export default function DashboardApp({
             })}</div>
           </section>
 
-          <p className="foot-note">Tiger Invest · cotação ao vivo via CoinGecko · custo médio por transação · dados por usuário no Supabase (RLS). Não é recomendação de investimento.</p>
+          <p className="foot-note">Tiger Invest · sinais técnicos e cotação ao vivo (CoinGecko) · custo médio por transação · controle de pools · dados por usuário no Supabase (RLS). Não é recomendação de investimento.</p>
         </div>
 
         <nav className="nav">
@@ -338,15 +334,35 @@ export default function DashboardApp({
           const h = priced.find(x => x.id === detail.id) || detail
           const my = txs.filter(x => x.symbol === h.symbol)
           const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
-          const custoMedio = h.qty ? h.invested / h.qty : 0
-          const pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
-          const firstDate = my.length ? my.map(x => x.buy_date).sort()[0] : ''
-          const L = live[h.cg_id]
+          const custoMedio = h.qty ? h.invested / h.qty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
+          const firstDate = my.length ? my.map(x => x.buy_date).sort()[0] : '', L = live[h.cg_id], sg = signals[h.cg_id]
           return (
             <div className="modal" onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
               <div className="sheet"><div className="grabber" />
                 <div className="sheet-scroll">
-                  <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name} <span style={{ marginLeft: 'auto' }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
+                  <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<span style={{ marginLeft: 'auto' }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
+
+                  {sg ? (<div className="sigcard">
+                    <div className={`verdict verdict-${sg.verdict.tone}`}>
+                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↓' : sg.verdict.tone === 'sell' ? '↑' : '•'}</div>
+                      <div><b>{sg.verdict.label}</b><p>{sg.verdict.text}</p></div>
+                    </div>
+                    <div className="rangebar" style={{ marginTop: 16 }}>
+                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.support - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
+                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.resistance - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
+                      <div className="cur" style={{ left: `${Math.min(100, Math.max(0, sg.rangePos))}%` }} />
+                    </div>
+                    <div className="rangeends"><span className="ce-buy">◄ COMPRA (barato)</span><span className="ce-sell">VENDA (caro) ►</span></div>
+                    <div className="rangelbl"><span>fundo {usd(sg.low52)}</span><span>topo {usd(sg.high52)}</span></div>
+                    <div style={{ marginTop: 12 }}>
+                      <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
+                      <div className="sigrow"><span className="k">Posição no ano</span><span className="v">{fmt(sg.rangePos, 0)}% <span className="sighint">· {sg.rangeHint}</span></span></div>
+                      <div className="sigrow"><span className="k">Tendência</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
+                      <div className="sigrow"><span className="k">Suporte (comprar perto)</span><span className="v up">{usd(sg.support)}</span></div>
+                      <div className="sigrow"><span className="k">Resistência (vender perto)</span><span className="v down">{usd(sg.resistance)}</span></div>
+                    </div>
+                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando sinais técnicos…</p> : null}
+
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>
                     <div className="dcell"><div className="k">Total geral</div><div className="v">{usd(h.invested)}</div></div>
@@ -361,108 +377,58 @@ export default function DashboardApp({
                     <div className="dcell"><div className="k">Rede</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.rede))}</div></div>
                     <div className="dcell"><div className="k">Corretora</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.corretora))}</div></div>
                   </div>
-                  {(() => {
-                    const sg = signals[h.cg_id]
-                    if (!sg) return h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando sinais técnicos…</p> : null
-                    const tone = sg.region.tone
-                    const tc = tone === 'buy' ? 'var(--green)' : tone === 'sell' ? 'var(--red)' : '#F5C850'
-                    const ic = tone === 'buy' ? '↓' : tone === 'sell' ? '↑' : '•'
-                    const sc = sg.rating.score
-                    const rc = sc > 0.1 ? 'var(--green)' : sc < -0.1 ? 'var(--red)' : '#F5C850'
-                    const pos = (x: number) => Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (x - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))
-                    return (
-                      <div className="sigcard">
-                        <div className="sigtop">
-                          <div className="sigdial" style={{ background: tone === 'buy' ? 'rgba(43,255,154,.14)' : tone === 'sell' ? 'rgba(255,77,109,.14)' : 'rgba(245,200,80,.14)', color: tc }}>{ic}</div>
-                          <div className="sigrating"><b style={{ color: rc }}>{sg.rating.label}</b><span>região: {sg.region.label}</span></div>
-                          <span className={`sigbadge sig-${tone}`}>{tone === 'buy' ? 'COMPRA' : tone === 'sell' ? 'VENDA' : 'NEUTRO'}</span>
-                        </div>
-                        <div className="rangebar">
-                          <div className="tick" style={{ left: `${pos(sg.support)}%` }} />
-                          <div className="tick" style={{ left: `${pos(sg.resistance)}%` }} />
-                          <div className="cur" style={{ left: `${Math.min(100, Math.max(0, sg.rangePos))}%` }} />
-                        </div>
-                        <div className="rangelbl"><span>fundo {usd(sg.low52)}</span><span>topo {usd(sg.high52)}</span></div>
-                        <div style={{ marginTop: 10 }}>
-                          <div className="sigrow"><span className="k">RSI (14)</span><span className="v" style={{ color: sg.rsi != null && sg.rsi < 35 ? 'var(--green)' : sg.rsi != null && sg.rsi > 65 ? 'var(--red)' : 'var(--text)' }}>{sg.rsi != null ? fmt(sg.rsi, 0) : '—'}</span></div>
-                          <div className="sigrow"><span className="k">Suporte (30d)</span><span className="v" style={{ color: 'var(--green)' }}>{usd(sg.support)}</span></div>
-                          <div className="sigrow"><span className="k">Resistência (30d)</span><span className="v" style={{ color: 'var(--red)' }}>{usd(sg.resistance)}</span></div>
-                          <div className="sigrow"><span className="k">Posição no range 52sem</span><span className="v">{fmt(sg.rangePos, 0)}%</span></div>
-                          <div className="sigrow"><span className="k">Médias favoráveis</span><span className="v">{sg.maAbove}/3</span></div>
-                        </div>
-                      </div>
-                    )
-                  })()}
                   <div className="eyebrow" style={{ marginTop: 18 }}>Compras ({my.length})</div>
-                  {my.map(x => (
-                    <div className="txitem" key={x.id}>
-                      <div className="txhead"><span>{new Date(x.buy_date).toLocaleDateString('pt-BR')} · {daysSince(x.buy_date)}d</span><b>{fmt(x.qty, x.qty < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
-                      <div className="txmeta">
-                        <span className="txtag">rede <b>{x.rede || '—'}</b></span>
-                        <span className="txtag">corretora <b>{x.corretora || '—'}</b></span>
-                        <span className="txtag">carteira <b>{x.carteira || '—'}</b></span>
-                        <span className="txtag">saldo compra <b>{usd(x.qty * x.buy_price)}</b></span>
-                        {x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}
-                        {x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}
-                        <span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="grid2" style={{ marginTop: 16 }}>
-                    <button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button>
-                    <button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button>
-                  </div>
+                  {my.map(x => (<div className="txitem" key={x.id}>
+                    <div className="txhead"><span>{new Date(x.buy_date).toLocaleDateString('pt-BR')} · {daysSince(x.buy_date)}d</span><b>{fmt(x.qty, x.qty < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
+                    <div className="txmeta"><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
+                  </div>))}
+                  <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
                 </div>
               </div>
             </div>
           )
         })()}
 
-        {/* FORM DE COMPRA / NOVO ATIVO */}
+        {/* FORM DE COMPRA */}
         {txForm && (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setTxForm(null) }}>
-            <div className="sheet"><div className="grabber" />
-              <div className="sheet-scroll">
-                <h3>{txForm.isNew ? 'Novo ativo / 1ª compra' : `Comprar ${txForm.symbol}`}</h3>
-                {txForm.isNew && (<>
-                  <div className="grid2">
-                    <div className="field"><label>Nome</label><input value={txForm.name} onChange={e => setTxForm({ ...txForm, name: e.target.value })} placeholder="Ethereum" /></div>
-                    <div className="field"><label>Símbolo</label><input value={txForm.symbol} onChange={e => setTxForm({ ...txForm, symbol: e.target.value.toUpperCase() })} placeholder="ETH" /></div>
-                  </div>
-                  <div className="grid2">
-                    <div className="field"><label>ID CoinGecko</label><input value={txForm.cg_id} onChange={e => setTxForm({ ...txForm, cg_id: e.target.value })} placeholder="ethereum" /></div>
-                    <div className="field"><label>Meta %</label><input inputMode="decimal" value={txForm.meta_pct} onChange={e => setTxForm({ ...txForm, meta_pct: e.target.value })} /></div>
-                  </div>
-                </>)}
-                <div className="grid2">
-                  <div className="field"><label>Rede</label><input value={txForm.rede} onChange={e => setTxForm({ ...txForm, rede: e.target.value })} placeholder="BASE" /></div>
-                  <div className="field"><label>Corretora</label><input value={txForm.corretora} onChange={e => setTxForm({ ...txForm, corretora: e.target.value })} placeholder="BYbit" /></div>
-                </div>
-                <div className="grid2">
-                  <div className="field"><label>Carteira</label><input value={txForm.carteira} onChange={e => setTxForm({ ...txForm, carteira: e.target.value })} placeholder="METAMASK" /></div>
-                  <div className="field"><label>Data da compra</label><input type="date" value={txForm.buy_date} onChange={e => setTxForm({ ...txForm, buy_date: e.target.value })} /></div>
-                </div>
-                <div className="grid2">
-                  <div className="field"><label>Qtd. na compra</label><input inputMode="decimal" value={txForm.qty} onChange={e => setTxForm({ ...txForm, qty: e.target.value })} /></div>
-                  <div className="field"><label>Preço compra U$</label><input inputMode="decimal" value={txForm.buy_price} onChange={e => setTxForm({ ...txForm, buy_price: e.target.value })} /></div>
-                </div>
-                <div className="grid2">
-                  <div className="field"><label>Stop limit U$</label><input inputMode="decimal" value={txForm.stop_limit} onChange={e => setTxForm({ ...txForm, stop_limit: e.target.value })} /></div>
-                  <div className="field"><label>Alvo venda U$</label><input inputMode="decimal" value={txForm.target} onChange={e => setTxForm({ ...txForm, target: e.target.value })} /></div>
-                </div>
-                <div className="modal-preview"><span>Saldo desta compra</span><b className="num">{usd(num(String(txForm.qty)) * num(String(txForm.buy_price)))}</b></div>
-                <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setTxForm(null)}>Cancelar</button><button className="btn" onClick={saveBuy}>Salvar compra</button></div>
-              </div>
-            </div>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{txForm.isNew ? 'Novo ativo / 1ª compra' : `Comprar ${txForm.symbol}`}</h3>
+              {txForm.isNew && (<>
+                <div className="grid2"><div className="field"><label>Nome</label><input value={txForm.name} onChange={e => setTxForm({ ...txForm, name: e.target.value })} placeholder="Ethereum" /></div><div className="field"><label>Símbolo</label><input value={txForm.symbol} onChange={e => setTxForm({ ...txForm, symbol: e.target.value.toUpperCase() })} placeholder="ETH" /></div></div>
+                <div className="grid2"><div className="field"><label>ID CoinGecko</label><input value={txForm.cg_id} onChange={e => setTxForm({ ...txForm, cg_id: e.target.value })} placeholder="ethereum" /></div><div className="field"><label>Meta %</label><input inputMode="decimal" value={txForm.meta_pct} onChange={e => setTxForm({ ...txForm, meta_pct: e.target.value })} /></div></div>
+              </>)}
+              <div className="grid2"><div className="field"><label>Rede</label><input value={txForm.rede} onChange={e => setTxForm({ ...txForm, rede: e.target.value })} placeholder="BASE" /></div><div className="field"><label>Corretora</label><input value={txForm.corretora} onChange={e => setTxForm({ ...txForm, corretora: e.target.value })} placeholder="BYbit" /></div></div>
+              <div className="grid2"><div className="field"><label>Carteira</label><input value={txForm.carteira} onChange={e => setTxForm({ ...txForm, carteira: e.target.value })} placeholder="METAMASK" /></div><div className="field"><label>Data da compra</label><input type="date" value={txForm.buy_date} onChange={e => setTxForm({ ...txForm, buy_date: e.target.value })} /></div></div>
+              <div className="grid2"><div className="field"><label>Qtd. na compra</label><input inputMode="decimal" value={txForm.qty} onChange={e => setTxForm({ ...txForm, qty: e.target.value })} /></div><div className="field"><label>Preço compra U$</label><input inputMode="decimal" value={txForm.buy_price} onChange={e => setTxForm({ ...txForm, buy_price: e.target.value })} /></div></div>
+              <div className="grid2"><div className="field"><label>Stop limit U$</label><input inputMode="decimal" value={txForm.stop_limit} onChange={e => setTxForm({ ...txForm, stop_limit: e.target.value })} /></div><div className="field"><label>Alvo venda U$</label><input inputMode="decimal" value={txForm.target} onChange={e => setTxForm({ ...txForm, target: e.target.value })} /></div></div>
+              <div className="modal-preview"><span>Saldo desta compra</span><b className="num">{usd(num(txForm.qty) * num(txForm.buy_price))}</b></div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setTxForm(null)}>Cancelar</button><button className="btn" onClick={saveBuy}>Salvar compra</button></div>
+            </div></div>
           </div>
         )}
 
-        {/* EDIT CAIXA / POOL */}
+        {/* FORM DE POOL */}
+        {poolForm && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setPoolForm(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{poolForm.id ? 'Editar pool' : 'Nova pool'}</h3>
+              <div className="grid2"><div className="field"><label>Par 1 (volátil)</label><input value={poolForm.par1} onChange={e => setPoolForm({ ...poolForm, par1: e.target.value.toUpperCase() })} placeholder="ETH" /></div><div className="field"><label>ID CoinGecko p/ range</label><input value={poolForm.par1_cg_id} onChange={e => setPoolForm({ ...poolForm, par1_cg_id: e.target.value })} placeholder="ethereum" /></div></div>
+              <div className="grid2"><div className="field"><label>Par 2 (estável)</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div><div className="field"><label>dApp</label><input value={poolForm.dapp} onChange={e => setPoolForm({ ...poolForm, dapp: e.target.value })} placeholder="Uniswap v3" /></div></div>
+              <div className="grid2"><div className="field"><label>Rede</label><input value={poolForm.rede} onChange={e => setPoolForm({ ...poolForm, rede: e.target.value })} placeholder="Base" /></div><div className="field"><label>Data de entrada</label><input type="date" value={poolForm.entry_date} onChange={e => setPoolForm({ ...poolForm, entry_date: e.target.value })} /></div></div>
+              <div className="grid2"><div className="field"><label>Range LOW (preço)</label><input inputMode="decimal" value={poolForm.low_range} onChange={e => setPoolForm({ ...poolForm, low_range: e.target.value })} /></div><div className="field"><label>Range HIGH (preço)</label><input inputMode="decimal" value={poolForm.high_range} onChange={e => setPoolForm({ ...poolForm, high_range: e.target.value })} /></div></div>
+              <div className="grid2"><div className="field"><label>Aporte U$</label><input inputMode="decimal" value={poolForm.aporte} onChange={e => setPoolForm({ ...poolForm, aporte: e.target.value })} /></div><div className="field"><label>Saldo atual U$</label><input inputMode="decimal" value={poolForm.current_value} onChange={e => setPoolForm({ ...poolForm, current_value: e.target.value })} /></div></div>
+              <div className="grid2"><div className="field"><label>Taxas geradas U$</label><input inputMode="decimal" value={poolForm.fees} onChange={e => setPoolForm({ ...poolForm, fees: e.target.value })} /></div><div className="field"><label>Link da pool</label><input value={poolForm.link} onChange={e => setPoolForm({ ...poolForm, link: e.target.value })} placeholder="https://..." /></div></div>
+              <div className="grid2" style={{ marginTop: 16 }}>{poolForm.id && <button className="btn ghost danger" onClick={() => delPool(poolForm.id)}>Excluir</button>}<button className="btn ghost" onClick={() => setPoolForm(null)}>Cancelar</button><button className="btn" onClick={savePool}>Salvar</button></div>
+            </div></div>
+          </div>
+        )}
+
+        {/* EDIT CAIXA */}
         {editDraft && (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setEditDraft(null) }}>
             <div className="sheet"><div className="grabber" />
               <h3>{editDraft.name}</h3>
-              {editDraft.kind === 'pool' && <div className="field"><label>Aporte U$</label><input inputMode="decimal" value={editDraft.invested} onChange={e => setEditDraft({ ...editDraft, invested: num(e.target.value) })} /></div>}
               <div className="field"><label>Valor atual U$</label><input inputMode="decimal" value={editDraft.current_value ?? 0} onChange={e => setEditDraft({ ...editDraft, current_value: num(e.target.value) })} /></div>
               <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setEditDraft(null)}>Cancelar</button><button className="btn" onClick={saveEdit}>Salvar</button></div>
             </div>
@@ -470,23 +436,5 @@ export default function DashboardApp({
         )}
       </div>
     </>
-  )
-}
-
-function Gauge({ val }: { val: number }) {
-  const max = 2, r = 80, cx = 100, cy = 100
-  const ang = (f: number) => Math.PI - f * Math.PI
-  const pt = (f: number, rad: number): [number, number] => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))]
-  const arc = (f0: number, f1: number, rad: number) => { const [a0x, a0y] = pt(f0, rad), [a1x, a1y] = pt(f1, rad); const l = f1 - f0 > 0.5 ? 1 : 0; return `M ${a0x} ${a0y} A ${rad} ${rad} 0 ${l} 1 ${a1x} ${a1y}` }
-  const f = Math.max(0, Math.min(1, val / max))
-  const [nx, ny] = pt(f, r - 6), [tx, ty] = pt(0.5, r + 9), [tx2, ty2] = pt(0.5, r - 9)
-  return (
-    <div className="gauge"><svg viewBox="0 0 200 118">
-      <path d={arc(0, 1, r)} stroke="rgba(255,255,255,.07)" strokeWidth="12" fill="none" strokeLinecap="round" />
-      <path d={arc(0, 0.5, r)} stroke="#FF4D6D" strokeWidth="12" fill="none" strokeLinecap="round" />
-      <path d={arc(0.5, 1, r)} stroke="#2BFF9A" strokeWidth="12" fill="none" strokeLinecap="round" />
-      <line x1={tx} y1={ty} x2={tx2} y2={ty2} stroke="#F4EDFF" strokeWidth="2" />
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="#FF2E9A" strokeWidth="3" strokeLinecap="round" /><circle cx={cx} cy={cy} r="6" fill="#FF2E9A" />
-    </svg><div className="read"><b className="num">{fmt(val)}%</b><small>retorno diário</small></div></div>
   )
 }

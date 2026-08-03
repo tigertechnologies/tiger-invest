@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import DashboardApp from '@/components/DashboardApp'
-import type { Holding, Flow, Transaction } from '@/lib/data'
+import type { Holding, Flow, Transaction, Pool } from '@/lib/data'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,6 +13,7 @@ export default async function DashboardPage() {
   const { data: holdings } = await supabase.from('holdings').select('*').order('sort', { ascending: true })
   const { data: flows } = await supabase.from('flows').select('*').order('created_at', { ascending: false })
   const { data: txs } = await supabase.from('transactions').select('*').order('buy_date', { ascending: true })
+  const { data: pools } = await supabase.from('pools').select('*').order('created_at', { ascending: true })
 
   return (
     <DashboardApp
@@ -20,6 +21,7 @@ export default async function DashboardPage() {
       initialHoldings={(holdings ?? []) as Holding[]}
       initialFlows={(flows ?? []) as Flow[]}
       initialTx={(txs ?? []) as Transaction[]}
+      initialPools={(pools ?? []) as Pool[]}
     />
   )
 }
