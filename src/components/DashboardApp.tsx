@@ -134,6 +134,12 @@ export default function DashboardApp({
   const plpct = t.riskInv ? (t.pl / t.riskInv) * 100 : 0
   const criptoPl = t.criptoInv ? ((t.criptoVal - t.criptoInv) / t.criptoInv) * 100 : 0
   const poolPl = poolsInv ? ((poolsVal - poolsInv) / poolsInv) * 100 : 0
+  const cryptoVal = priced.filter(h => h.kind === 'crypto').reduce((a, h) => a + valOf(h), 0)
+  const cryptoInv = holdings.filter(h => h.kind === 'crypto').reduce((a, h) => a + h.invested, 0)
+  const cryptoPl = cryptoInv ? (cryptoVal - cryptoInv) / cryptoInv * 100 : 0
+  const stockVal = priced.filter(h => h.kind === 'stock').reduce((a, h) => a + valOf(h), 0)
+  const stockInv = holdings.filter(h => h.kind === 'stock').reduce((a, h) => a + h.invested, 0)
+  const stockPl = stockInv ? (stockVal - stockInv) / stockInv * 100 : 0
 
   const cats = useMemo(() => {
     const bs = (s: string) => priced.filter(h => h.symbol === s).reduce((a, h) => a + valOf(h), 0)
@@ -196,6 +202,18 @@ export default function DashboardApp({
     : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true })
   const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '' })
 
+  const assetRow = (h: Holding) => {
+    const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
+    const real = t.patr ? v / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1)
+    return (<div className="asset" key={h.id} onClick={() => setDetail(holdings.find(x => x.id === h.id)!)}>
+      <div className="sym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
+      <div className="a-main"><div className="a-name">{h.name}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
+        <div className="metabar"><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>
+      <div className="a-right"><div className="a-val">{usd(v)}</div><div className={`a-pl ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</div></div></div>)
+  }
+  const cryptoList = priced.filter(h => h.kind === 'crypto').slice().sort((a, b) => valOf(b) - valOf(a))
+  const stockList = priced.filter(h => h.kind === 'stock').slice().sort((a, b) => valOf(b) - valOf(a))
+
   return (
     <>
       <Background />
@@ -221,9 +239,10 @@ export default function DashboardApp({
             <div className="card section-gap"><div className="eyebrow">Alocação atual</div>
               <div className="donut-wrap"><div className="donut"><svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="15.915" fill="transparent" stroke="rgba(255,255,255,.05)" strokeWidth="5.5" />{segs}</svg><div className="center"><small>Total</small><b className="num">${fmt(donutTot, 0)}</b></div></div>
                 <div className="legend">{cats.map((x, i) => (<div className="leg" key={i}><span className="dot" style={{ background: x.c, color: x.c }} /><span>{x.n}</span><span className="lpct">{fmt(x.v / donutTot * 100, 1)}%</span></div>))}</div></div></div>
-            <div className="eyebrow section-gap">Blocos</div>
-            <div className="trio">
-              <div className="stat"><div className="k">Cripto/Ações</div><div className="v num">{usd(t.criptoVal)}</div><div className={`s num ${criptoPl >= 0 ? 'up' : 'down'}`}>{pct(criptoPl)}</div></div>
+            <div className="eyebrow section-gap">Blocos por nicho</div>
+            <div className="trio trio4">
+              <div className="stat"><div className="k">Cripto</div><div className="v num">{usd(cryptoVal)}</div><div className={`s num ${cryptoPl >= 0 ? 'up' : 'down'}`}>{pct(cryptoPl)}</div></div>
+              <div className="stat"><div className="k">Ações / ETFs</div><div className="v num">{usd(stockVal)}</div><div className={`s num ${stockPl >= 0 ? 'up' : 'down'}`}>{pct(stockPl)}</div></div>
               <div className="stat"><div className="k">Caixa</div><div className="v num">{usd(t.cashVal)}</div><div className="s" style={{ color: 'var(--muted)' }}>reserva</div></div>
               <div className="stat"><div className="k">Pools</div><div className="v num">{usd(poolsVal)}</div><div className={`s num ${poolPl >= 0 ? 'up' : 'down'}`}>{pct(poolPl)}</div></div>
             </div>
@@ -232,15 +251,9 @@ export default function DashboardApp({
           {/* CARTEIRA */}
           <section className={`screen ${tab === 'carteira' ? 'active' : ''}`}>
             <div className="eyebrow">Carteira · toque para ver detalhes</div>
-            {cryptoHoldings.map(h => {
-              const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
-              const real = t.patr ? v / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1)
-              return (<div className="asset" key={h.id} onClick={() => setDetail(holdings.find(x => x.id === h.id)!)}>
-                <div className="sym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
-                <div className="a-main"><div className="a-name">{h.name}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
-                  <div className="metabar"><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>
-                <div className="a-right"><div className="a-val">{usd(v)}</div><div className={`a-pl ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</div></div></div>)
-            })}
+            <div className="niche-h">Cripto · <b>{usd(cryptoVal)}</b></div>
+            {cryptoList.map(assetRow)}
+            {stockList.length > 0 && (<><div className="niche-h" style={{ marginTop: 18 }}>Ações / ETFs · <b>{usd(stockVal)}</b></div>{stockList.map(assetRow)}</>)}
             <button className="addbtn" onClick={() => openBuy(null)}>+ registrar compra / novo ativo</button>
             <div className="card section-gap">{holdings.filter(h => h.kind === 'cash').map(h => (<div className="kv" key={h.id} onClick={() => setEditDraft({ ...h })} style={{ cursor: 'pointer' }}><span className="k">{h.name}</span><span className="v num">{usd(h.current_value ?? 0)}</span></div>))}</div>
           </section>
@@ -251,7 +264,7 @@ export default function DashboardApp({
             {priced.filter(h => h.kind === 'crypto' && h.cg_id).sort((a, b) => valOf(b) - valOf(a)).map(h => { const L = live[h.cg_id]; return (
               <div className="qrow" key={h.id}>
                 <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}</div>
-                <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▼ Compra' : signals[h.cg_id].verdict.tone === 'sell' ? '▲ Venda' : '• Observar'}</span>)}</div>
+                <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▲ COMPRA' : signals[h.cg_id].verdict.tone === 'sell' ? '▼ VENDA' : '● CAUTELA'}</span>)}</div>
                 <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
               </div>) })}
             <div className="qsection">Câmbio (R$)</div>
@@ -313,7 +326,7 @@ export default function DashboardApp({
             })}</div>
           </section>
 
-          <p className="foot-note">Tiger Invest · sinais técnicos e cotação ao vivo (CoinGecko) · custo médio por transação · controle de pools · dados por usuário no Supabase (RLS). Não é recomendação de investimento.</p>
+          <p className="foot-note"><b style={{color:'var(--pink-bright)',fontFamily:'Sora'}}>Tiger Invest</b> · Não é recomendação de investimento. Todo e qualquer investimento é por conta e risco do usuário — estude os ativos antes de aplicar seu capital.</p>
         </div>
 
         <nav className="nav">
@@ -344,22 +357,25 @@ export default function DashboardApp({
 
                   {sg ? (<div className="sigcard">
                     <div className={`verdict verdict-${sg.verdict.tone}`}>
-                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↓' : sg.verdict.tone === 'sell' ? '↑' : '•'}</div>
+                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↑' : sg.verdict.tone === 'sell' ? '↓' : '!'}</div>
                       <div><b>{sg.verdict.label}</b><p>{sg.verdict.text}</p></div>
                     </div>
-                    <div className="rangebar" style={{ marginTop: 16 }}>
-                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.support - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
-                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.resistance - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
+                    <div className={`cycle cycle-${sg.cyclePos}`}><span>Bull Market Support Band</span><b>{usd(sg.bmsbMid)}</b></div>
+                    <div className="rr">
+                      <div className="rr-cell up"><span>Até o topo</span><b>+{fmt(sg.upsidePct, 0)}%</b></div>
+                      <div className="rr-cell down"><span>Até o fundo</span><b>-{fmt(sg.downsidePct, 0)}%</b></div>
+                      <div className="rr-cell"><span>Risco/Retorno</span><b>{sg.rr > 0 ? '1:' + fmt(sg.rr, 1) : '—'}</b></div>
+                    </div>
+                    <div className="rangebar" style={{ marginTop: 14 }}>
+                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.bmsbMid - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
                       <div className="cur" style={{ left: `${Math.min(100, Math.max(0, sg.rangePos))}%` }} />
                     </div>
-                    <div className="rangeends"><span className="ce-buy">◄ COMPRA (barato)</span><span className="ce-sell">VENDA (caro) ►</span></div>
-                    <div className="rangelbl"><span>fundo {usd(sg.low52)}</span><span>topo {usd(sg.high52)}</span></div>
+                    <div className="rangeends"><span className="ce-buy">◄ FUNDO {usd(sg.low52)}</span><span className="ce-sell">TOPO {usd(sg.high52)} ►</span></div>
                     <div style={{ marginTop: 12 }}>
+                      <div className="sigrow"><span className="k">Ciclo (BMSB)</span><span className="v" style={{ color: sg.cyclePos === 'above' ? 'var(--green)' : sg.cyclePos === 'below' ? 'var(--red)' : '#F5A623' }}>{sg.cycleHint}</span></div>
                       <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
                       <div className="sigrow"><span className="k">Posição no ano</span><span className="v">{fmt(sg.rangePos, 0)}% <span className="sighint">· {sg.rangeHint}</span></span></div>
                       <div className="sigrow"><span className="k">Tendência</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
-                      <div className="sigrow"><span className="k">Suporte (comprar perto)</span><span className="v up">{usd(sg.support)}</span></div>
-                      <div className="sigrow"><span className="k">Resistência (vender perto)</span><span className="v down">{usd(sg.resistance)}</span></div>
                     </div>
                   </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando sinais técnicos…</p> : null}
 

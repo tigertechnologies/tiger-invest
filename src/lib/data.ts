@@ -95,10 +95,11 @@ export type Signal = {
   price: number; rsi: number | null
   sma20: number; sma50: number; sma200: number
   high52: number; low52: number; rangePos: number
-  support: number; resistance: number
-  maAbove: number
+  support: number; resistance: number; maAbove: number
+  bmsbMid: number; cyclePos: 'above' | 'in' | 'below'
+  upsidePct: number; downsidePct: number; rr: number
   verdict: { label: string; tone: 'buy' | 'sell' | 'neutral'; text: string }
-  rsiHint: string; rangeHint: string; maHint: string
+  rsiHint: string; rangeHint: string; maHint: string; cycleHint: string
 }
 
 
