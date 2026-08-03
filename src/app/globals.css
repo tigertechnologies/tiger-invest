@@ -297,3 +297,20 @@ select{font-family:'Inter';}
 .trg span{color:var(--muted);line-height:1.4;}
 .trg-buy{background:rgba(43,255,154,.07);border:1px solid rgba(43,255,154,.2);} .trg-buy b{color:var(--green);}
 .trg-sell{background:rgba(255,77,109,.07);border:1px solid rgba(255,77,109,.2);} .trg-sell b{color:var(--red);}
+
+/* ---- v5 Fase2: pools reorg ---- */
+.poolhead{display:flex;align-items:center;gap:12px;}
+.poolt{flex:1;min-width:0;} .poolt b{font-size:15px;font-weight:700;display:block;} .poolt span{font-size:11px;color:var(--muted);font-family:'JetBrains Mono';}
+.poolval{text-align:right;flex:none;} .poolval .num:first-child{font-weight:700;font-size:15px;} .poolval .num:last-child{font-size:12px;}
+.rangestatus{display:block;text-align:center;}
+.rs-warn{background:rgba(245,166,35,.14);color:#F5A623;}
+.poolrange2{position:relative;height:9px;border-radius:5px;margin:8px 0 5px;background:rgba(255,255,255,.06);overflow:visible;}
+.pr-band{position:absolute;inset:0;border-radius:5px;background:linear-gradient(90deg,rgba(43,255,154,.25),rgba(43,255,154,.5),rgba(43,255,154,.25));}
+.pr-cur{position:absolute;top:-5px;width:4px;height:19px;border-radius:2px;background:#fff;box-shadow:0 0 8px #fff;}
+.pr-cur.out{background:var(--red);box-shadow:0 0 8px var(--red);}
+.poolrangelbl{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:'JetBrains Mono';}
+.pr-now{color:var(--text);font-weight:600;}
+.pooltraction{display:flex;gap:8px;margin-top:12px;}
+.pt-cell{flex:1;text-align:center;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;padding:9px 4px;}
+.pt-cell span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.pt-cell b{font-family:'JetBrains Mono';font-weight:700;font-size:13px;display:block;margin-top:3px;}
