@@ -89,3 +89,14 @@ export function daysSince(dateStr: string): number {
   const d = new Date(dateStr); const now = new Date()
   return Math.max(0, Math.floor((now.getTime() - d.getTime()) / 86400000))
 }
+
+// ---- v3: sinais técnicos ----
+export type Signal = {
+  price: number; rsi: number | null
+  sma20: number; sma50: number; sma200: number
+  high52: number; low52: number; rangePos: number
+  support: number; resistance: number
+  rating: { score: number; label: string }
+  region: { label: string; tone: 'buy' | 'sell' | 'neutral' }
+  maAbove: number
+}

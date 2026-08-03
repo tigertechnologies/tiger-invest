@@ -208,3 +208,22 @@ select{font-family:'Inter';}
 .sheet-scroll{max-height:76vh;overflow-y:auto;}
 .sheet-scroll::-webkit-scrollbar{width:0;}
 .nav button{font-size:9.5px;}
+
+/* ---- v3: sinais técnicos ---- */
+.sigbadge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;font-family:'JetBrains Mono';padding:3px 8px;border-radius:7px;}
+.sig-buy{background:rgba(43,255,154,.13);color:var(--green);}
+.sig-sell{background:rgba(255,77,109,.13);color:var(--red);}
+.sig-neutral{background:rgba(245,200,80,.13);color:#F5C850;}
+.sigcard{margin-top:14px;background:linear-gradient(155deg,rgba(60,20,66,.35),rgba(20,14,40,.4));border:1px solid var(--line);border-radius:14px;padding:15px;}
+.sigtop{display:flex;align-items:center;gap:12px;}
+.sigdial{width:56px;height:56px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:22px;}
+.sigrating{flex:1;}
+.sigrating b{font-family:'Sora';font-weight:800;font-size:18px;display:block;}
+.sigrating span{font-size:11px;color:var(--muted);}
+.rangebar{position:relative;height:8px;border-radius:5px;margin:20px 0 6px;background:linear-gradient(90deg,var(--green),#F5C850 50%,var(--red));}
+.rangebar .cur{position:absolute;top:-5px;width:3px;height:18px;border-radius:2px;background:#fff;box-shadow:0 0 8px #fff;}
+.rangebar .tick{position:absolute;top:-2px;width:2px;height:12px;background:rgba(255,255,255,.5);}
+.rangelbl{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);font-family:'JetBrains Mono';}
+.sigrow{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;}
+.sigrow:last-child{border-bottom:0;}
+.sigrow .k{color:var(--muted);} .sigrow .v{font-family:'JetBrains Mono';font-weight:600;}

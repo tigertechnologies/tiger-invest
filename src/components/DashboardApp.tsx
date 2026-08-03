@@ -1,11 +1,11 @@
 'use client'
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
 import {
   Holding, Flow, Transaction, Live, DEFAULT_HOLDINGS, POOL_INFO, BRL_RATE, DEFAULT_APORTES,
-  value as valOf, usd, pct, brl, fmt, daysSince,
+  value as valOf, usd, pct, brl, fmt, daysSince, Signal,
 } from '@/lib/data'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'pools' | 'aportes' | 'metas'
@@ -44,35 +44,44 @@ export default function DashboardApp({
     if (t.data) setTxs(t.data as Transaction[])
   }, [supabase])
 
-  // auto-seed (holdings + 1 transação por cripto)
+  // seed ÚNICO (gated por flag no banco) — corrige o bug de reaparecer/apagar dados
+  const seededRef = useRef(false)
   useEffect(() => {
-    if (holdings.length === 0 && userId) {
-      (async () => {
+    if (!userId || seededRef.current) return
+    seededRef.current = true
+    ;(async () => {
+      const { data: st } = await supabase.from('app_state').select('seeded').eq('user_id', userId).maybeSingle()
+      if (st?.seeded) return
+      if (holdings.length === 0) {
         await supabase.from('holdings').insert(DEFAULT_HOLDINGS.map(r => ({ ...r, user_id: userId })))
-        const cryptos = DEFAULT_HOLDINGS.filter(r => r.kind === 'crypto')
-        await supabase.from('transactions').insert(cryptos.map(r => ({
+        const cs = DEFAULT_HOLDINGS.filter(r => r.kind === 'crypto')
+        await supabase.from('transactions').insert(cs.map(r => ({
           user_id: userId, symbol: r.symbol, name: r.name, cg_id: r.cg_id, color: r.color,
           rede: 'BASE', corretora: 'METAMASK', carteira: 'METAMASK', buy_date: '2025-06-27',
           qty: r.qty, buy_price: r.qty ? r.invested / r.qty : 0, stop_limit: 0, target: 0, meta_pct: r.meta_pct,
         })))
-        await refetch()
-      })()
-    }
-  }, [holdings.length, userId, supabase, refetch])
-
-  // back-fill: conta antiga (tem holdings mas nenhuma transação) -> gera 1 compra por cripto
-  useEffect(() => {
-    if (userId && txs.length === 0) {
-      const cryptos = holdings.filter(h => h.kind === 'crypto')
-      if (cryptos.length > 0) {
-        supabase.from('transactions').insert(cryptos.map(h => ({
+      } else if (txs.length === 0) {
+        const cs = holdings.filter(h => h.kind === 'crypto')
+        if (cs.length > 0) await supabase.from('transactions').insert(cs.map(h => ({
           user_id: userId, symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color,
           rede: 'BASE', corretora: 'METAMASK', carteira: 'METAMASK', buy_date: '2025-06-27',
           qty: h.qty, buy_price: h.qty ? h.invested / h.qty : 0, stop_limit: 0, target: 0, meta_pct: h.meta_pct,
-        }))).then(() => refetch())
+        })))
       }
-    }
-  }, [userId, txs.length, holdings, supabase, refetch])
+      await supabase.from('app_state').upsert({ user_id: userId, seeded: true })
+      await refetch()
+    })()
+  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // sinais técnicos (RSI/SMA/52sem/suporte-resistência)
+  const [signals, setSignals] = useState<Record<string, Signal>>({})
+  useEffect(() => {
+    const ids = Array.from(new Set(holdings.filter(h => h.kind === 'crypto' && h.cg_id).map(h => h.cg_id)))
+    if (!ids.length) return
+    let active = true
+    fetch(`/api/signals?ids=${ids.join(',')}`).then(r => r.json()).then(d => { if (active) setSignals(d || {}) }).catch(() => {})
+    return () => { active = false }
+  }, [holdings])
 
   // cotação ao vivo (markets + BRL)
   useEffect(() => {
@@ -259,7 +268,7 @@ export default function DashboardApp({
                   <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>
                     {L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}
                   </div>
-                  <div className="qname"><b>{h.name}</b><span>{h.symbol}</span></div>
+                  <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].region.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].region.tone === 'buy' ? '▼ Compra' : signals[h.cg_id].region.tone === 'sell' ? '▲ Venda' : '• Neutro'}</span>)}</div>
                   <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
                 </div>
               )
@@ -352,6 +361,38 @@ export default function DashboardApp({
                     <div className="dcell"><div className="k">Rede</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.rede))}</div></div>
                     <div className="dcell"><div className="k">Corretora</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.corretora))}</div></div>
                   </div>
+                  {(() => {
+                    const sg = signals[h.cg_id]
+                    if (!sg) return h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando sinais técnicos…</p> : null
+                    const tone = sg.region.tone
+                    const tc = tone === 'buy' ? 'var(--green)' : tone === 'sell' ? 'var(--red)' : '#F5C850'
+                    const ic = tone === 'buy' ? '↓' : tone === 'sell' ? '↑' : '•'
+                    const sc = sg.rating.score
+                    const rc = sc > 0.1 ? 'var(--green)' : sc < -0.1 ? 'var(--red)' : '#F5C850'
+                    const pos = (x: number) => Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (x - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))
+                    return (
+                      <div className="sigcard">
+                        <div className="sigtop">
+                          <div className="sigdial" style={{ background: tone === 'buy' ? 'rgba(43,255,154,.14)' : tone === 'sell' ? 'rgba(255,77,109,.14)' : 'rgba(245,200,80,.14)', color: tc }}>{ic}</div>
+                          <div className="sigrating"><b style={{ color: rc }}>{sg.rating.label}</b><span>região: {sg.region.label}</span></div>
+                          <span className={`sigbadge sig-${tone}`}>{tone === 'buy' ? 'COMPRA' : tone === 'sell' ? 'VENDA' : 'NEUTRO'}</span>
+                        </div>
+                        <div className="rangebar">
+                          <div className="tick" style={{ left: `${pos(sg.support)}%` }} />
+                          <div className="tick" style={{ left: `${pos(sg.resistance)}%` }} />
+                          <div className="cur" style={{ left: `${Math.min(100, Math.max(0, sg.rangePos))}%` }} />
+                        </div>
+                        <div className="rangelbl"><span>fundo {usd(sg.low52)}</span><span>topo {usd(sg.high52)}</span></div>
+                        <div style={{ marginTop: 10 }}>
+                          <div className="sigrow"><span className="k">RSI (14)</span><span className="v" style={{ color: sg.rsi != null && sg.rsi < 35 ? 'var(--green)' : sg.rsi != null && sg.rsi > 65 ? 'var(--red)' : 'var(--text)' }}>{sg.rsi != null ? fmt(sg.rsi, 0) : '—'}</span></div>
+                          <div className="sigrow"><span className="k">Suporte (30d)</span><span className="v" style={{ color: 'var(--green)' }}>{usd(sg.support)}</span></div>
+                          <div className="sigrow"><span className="k">Resistência (30d)</span><span className="v" style={{ color: 'var(--red)' }}>{usd(sg.resistance)}</span></div>
+                          <div className="sigrow"><span className="k">Posição no range 52sem</span><span className="v">{fmt(sg.rangePos, 0)}%</span></div>
+                          <div className="sigrow"><span className="k">Médias favoráveis</span><span className="v">{sg.maAbove}/3</span></div>
+                        </div>
+                      </div>
+                    )
+                  })()}
                   <div className="eyebrow" style={{ marginTop: 18 }}>Compras ({my.length})</div>
                   {my.map(x => (
                     <div className="txitem" key={x.id}>
