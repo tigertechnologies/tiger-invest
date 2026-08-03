@@ -101,3 +101,12 @@ drop policy if exists "own_pools" on public.pools;
 create policy "own_pools" on public.pools
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create index if not exists pools_user_idx on public.pools(user_id);
+-- ============================================================
+-- Tiger Invest v5 (Fase 2) — Fluxo de Caixa (rode no SQL Editor)
+-- Adiciona data do movimento p/ cálculo de períodos.
+-- ============================================================
+alter table public.flows add column if not exists move_date date not null default now();
+
+-- v5 extra
+alter table public.pools add column if not exists pool_address text default '';
+alter table public.pools add column if not exists network text default 'base';

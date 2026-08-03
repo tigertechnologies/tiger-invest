@@ -22,6 +22,7 @@ export type Flow = {
   kind: 'in' | 'out'
   amount: number
   note?: string
+  move_date?: string
   created_at?: string
 }
 
@@ -93,13 +94,15 @@ export function daysSince(dateStr: string): number {
 // ---- v3/v4: sinais técnicos ----
 export type Signal = {
   price: number; rsi: number | null
-  sma20: number; sma50: number; sma200: number
-  high52: number; low52: number; rangePos: number
-  support: number; resistance: number; maAbove: number
   bmsbMid: number; cyclePos: 'above' | 'in' | 'below'
-  upsidePct: number; downsidePct: number; rr: number
+  structure: 'alta' | 'baixa' | 'lateral'; structHint: string
+  supports: { price: number; touches: number; dist: number }[]
+  resistances: { price: number; touches: number; dist: number }[]
+  keySup: number; keyRes: number; upside: number; downside: number; rr: number
+  trigger: { buy: string; sell: string }
   verdict: { label: string; tone: 'buy' | 'sell' | 'neutral'; text: string }
-  rsiHint: string; rangeHint: string; maHint: string; cycleHint: string
+  rangePos: number; high52: number; low52: number; maAbove: number
+  rsiHint: string; maHint: string; confirm: string
 }
 
 
@@ -111,10 +114,11 @@ export type Pool = {
   aporte: number; current_value: number
   low_range: number; high_range: number
   entry_date: string; fees: number
+  pool_address?: string; network?: string
 }
 export const DEFAULT_POOL: Omit<Pool, 'id' | 'user_id'> = {
   par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base',
   link: 'https://app.uniswap.org/positions/v3/base/3831528',
   aporte: 2771.29, current_value: 1361.53, low_range: 3487.69, high_range: 4978.96,
-  entry_date: '2025-08-30', fees: 13.19,
+  entry_date: '2025-08-30', fees: 13.19, pool_address: '', network: 'base',
 }

@@ -357,27 +357,32 @@ export default function DashboardApp({
 
                   {sg ? (<div className="sigcard">
                     <div className={`verdict verdict-${sg.verdict.tone}`}>
-                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↑' : sg.verdict.tone === 'sell' ? '↓' : '!'}</div>
+                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↑' : sg.verdict.tone === 'sell' ? '↓' : '≈'}</div>
                       <div><b>{sg.verdict.label}</b><p>{sg.verdict.text}</p></div>
                     </div>
-                    <div className={`cycle cycle-${sg.cyclePos}`}><span>Bull Market Support Band</span><b>{usd(sg.bmsbMid)}</b></div>
+                    <div className={`struct struct-${sg.structure}`}><span>Estrutura</span><b>{sg.structure === 'baixa' ? 'TENDÊNCIA DE BAIXA' : sg.structure === 'alta' ? 'TENDÊNCIA DE ALTA' : 'LATERAL'} · {sg.structHint}</b></div>
                     <div className="rr">
-                      <div className="rr-cell up"><span>Até o topo</span><b>+{fmt(sg.upsidePct, 0)}%</b></div>
-                      <div className="rr-cell down"><span>Até o fundo</span><b>-{fmt(sg.downsidePct, 0)}%</b></div>
+                      <div className="rr-cell up"><span>Até resistência</span><b>+{fmt(sg.upside, 0)}%</b></div>
+                      <div className="rr-cell down"><span>Até suporte</span><b>-{fmt(sg.downside, 0)}%</b></div>
                       <div className="rr-cell"><span>Risco/Retorno</span><b>{sg.rr > 0 ? '1:' + fmt(sg.rr, 1) : '—'}</b></div>
                     </div>
-                    <div className="rangebar" style={{ marginTop: 14 }}>
-                      <div className="tick" style={{ left: `${Math.min(100, Math.max(0, sg.high52 > sg.low52 ? (sg.bmsbMid - sg.low52) / (sg.high52 - sg.low52) * 100 : 50))}%` }} />
-                      <div className="cur" style={{ left: `${Math.min(100, Math.max(0, sg.rangePos))}%` }} />
+                    <div className="levels">
+                      <div className="lvl-col"><div className="lvl-h res">Resistências ▲</div>
+                        {sg.resistances.length ? sg.resistances.map((z, i) => (<div className="lvl" key={'r' + i}><b className="down">{usd(z.price)}</b><span>+{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
+                      <div className="lvl-col"><div className="lvl-h sup">Suportes ▼</div>
+                        {sg.supports.length ? sg.supports.map((z, i) => (<div className="lvl" key={'s' + i}><b className="up">{usd(z.price)}</b><span>-{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
                     </div>
-                    <div className="rangeends"><span className="ce-buy">◄ FUNDO {usd(sg.low52)}</span><span className="ce-sell">TOPO {usd(sg.high52)} ►</span></div>
+                    <div className="triggers">
+                      <div className="trg trg-buy"><b>↑ Vira comprador</b><span>{sg.trigger.buy}</span></div>
+                      <div className="trg trg-sell"><b>↓ Continua baixa</b><span>{sg.trigger.sell}</span></div>
+                    </div>
                     <div style={{ marginTop: 12 }}>
-                      <div className="sigrow"><span className="k">Ciclo (BMSB)</span><span className="v" style={{ color: sg.cyclePos === 'above' ? 'var(--green)' : sg.cyclePos === 'below' ? 'var(--red)' : '#F5A623' }}>{sg.cycleHint}</span></div>
+                      <div className="sigrow"><span className="k">Ciclo (BMSB)</span><span className="v" style={{ color: sg.cyclePos === 'above' ? 'var(--green)' : sg.cyclePos === 'below' ? 'var(--red)' : '#F5A623' }}>{usd(sg.bmsbMid)}</span></div>
+                      <div className="sigrow"><span className="k">Confirmação</span><span className="v sighint">{sg.confirm}</span></div>
                       <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
-                      <div className="sigrow"><span className="k">Posição no ano</span><span className="v">{fmt(sg.rangePos, 0)}% <span className="sighint">· {sg.rangeHint}</span></span></div>
-                      <div className="sigrow"><span className="k">Tendência</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
+                      <div className="sigrow"><span className="k">Médias</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
                     </div>
-                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando sinais técnicos…</p> : null}
+                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando estrutura do gráfico…</p> : null}
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>

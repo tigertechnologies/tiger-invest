@@ -276,3 +276,24 @@ select{font-family:'Inter';}
 .rr-cell span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
 .rr-cell b{font-family:'JetBrains Mono';font-weight:700;font-size:15px;display:block;margin-top:4px;}
 .rr-cell.up b{color:var(--green);} .rr-cell.down b{color:var(--red);}
+
+/* ---- v6: price action estrutural ---- */
+.struct{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:11px 13px;border-radius:12px;font-size:12px;}
+.struct span{color:var(--muted);} .struct b{font-family:'JetBrains Mono';font-size:12px;font-weight:700;}
+.struct-baixa{background:rgba(255,77,109,.09);border:1px solid rgba(255,77,109,.28);} .struct-baixa b{color:var(--red);}
+.struct-alta{background:rgba(43,255,154,.09);border:1px solid rgba(43,255,154,.28);} .struct-alta b{color:var(--green);}
+.struct-lateral{background:rgba(245,166,35,.09);border:1px solid rgba(245,166,35,.28);} .struct-lateral b{color:#F5A623;}
+.levels{display:flex;gap:10px;margin-top:14px;}
+.lvl-col{flex:1;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:12px;padding:10px;}
+.lvl-h{font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px;}
+.lvl-h.res{color:var(--red);} .lvl-h.sup{color:var(--green);}
+.lvl{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line);}
+.lvl:last-child{border-bottom:0;}
+.lvl b{font-family:'JetBrains Mono';font-weight:600;font-size:12.5px;}
+.lvl span{font-family:'JetBrains Mono';font-size:10px;color:var(--muted);}
+.triggers{margin-top:14px;display:flex;flex-direction:column;gap:8px;}
+.trg{padding:10px 12px;border-radius:11px;font-size:11.5px;}
+.trg b{display:block;font-size:11px;font-weight:700;margin-bottom:3px;}
+.trg span{color:var(--muted);line-height:1.4;}
+.trg-buy{background:rgba(43,255,154,.07);border:1px solid rgba(43,255,154,.2);} .trg-buy b{color:var(--green);}
+.trg-sell{background:rgba(255,77,109,.07);border:1px solid rgba(255,77,109,.2);} .trg-sell b{color:var(--red);}
