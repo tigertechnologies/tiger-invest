@@ -63,3 +63,29 @@ export const usd = (n: number) => '$' + fmt(n)
 export const pct = (n: number) => (n > 0 ? '+' : '') + fmt(n) + '%'
 export const brl = (n: number) => 'R$ ' + fmt(n)
 export { fmt }
+
+// ---- v2: ledger de compras ----
+export type Transaction = {
+  id?: string
+  user_id?: string
+  symbol: string
+  name: string
+  cg_id: string
+  color: string
+  rede: string
+  corretora: string
+  carteira: string
+  buy_date: string
+  qty: number
+  buy_price: number
+  stop_limit: number
+  target: number
+  meta_pct: number
+}
+
+export type Live = { usd: number; ch24: number | null; ch30: number | null; ch1y: number | null; img?: string }
+
+export function daysSince(dateStr: string): number {
+  const d = new Date(dateStr); const now = new Date()
+  return Math.max(0, Math.floor((now.getTime() - d.getTime()) / 86400000))
+}

@@ -177,3 +177,34 @@ select{font-family:'Inter';}
 .auth-switch:hover{color:var(--pink);}
 
 @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important;}}
+
+/* ---- v2: Cotação ---- */
+.qsection{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:18px 4px 8px;}
+.qrow{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:13px;}
+.qrow + .qrow{margin-top:8px;}
+.qsym{width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;font-family:'Sora';font-weight:700;font-size:11px;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);}
+.qsym img{width:34px;height:34px;border-radius:10px;}
+.qname{flex:1;min-width:0;}
+.qname b{font-size:13.5px;font-weight:600;display:block;}
+.qname span{font-size:11px;color:var(--muted);font-family:'JetBrains Mono';}
+.qprice{text-align:right;}
+.qprice .p{font-family:'JetBrains Mono';font-weight:600;font-size:14px;}
+.qchg{font-family:'JetBrains Mono';font-size:11.5px;margin-top:2px;}
+.qbadge{font-size:10px;padding:2px 7px;border-radius:6px;background:rgba(45,226,238,.12);color:var(--cyan);font-family:'JetBrains Mono';font-weight:600;}
+
+/* ---- v2: Detalhe do ativo ---- */
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px;}
+.dcell{background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;padding:10px 11px;}
+.dcell .k{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+.dcell .v{font-family:'JetBrains Mono';font-weight:600;font-size:13.5px;margin-top:3px;}
+.txitem{background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:11px;padding:11px 12px;margin-top:8px;}
+.txhead{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;}
+.txhead b{font-family:'JetBrains Mono';}
+.txmeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.txtag{font-size:10px;padding:3px 8px;border-radius:6px;background:rgba(168,85,247,.1);border:1px solid var(--line);color:var(--muted);font-family:'JetBrains Mono';}
+.txtag b{color:var(--pink-bright);}
+.grid2{display:flex;gap:9px;}
+.grid2 > *{flex:1;}
+.sheet-scroll{max-height:76vh;overflow-y:auto;}
+.sheet-scroll::-webkit-scrollbar{width:0;}
+.nav button{font-size:9.5px;}
