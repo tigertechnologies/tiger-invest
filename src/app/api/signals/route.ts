@@ -120,7 +120,7 @@ export async function GET(request: Request) {
   const out: Record<string, any> = {}
   for (const id of ids) {
     try {
-      const r = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=max`, { next: { revalidate: 3600 } })
+      const r = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=365&interval=daily`, { next: { revalidate: 3600 } })
       if (!r.ok) continue
       const d = await r.json()
       const closes: number[] = (d.prices || []).map((p: number[]) => p[1])

@@ -26,6 +26,7 @@ export default function DashboardApp({
   const [live, setLive] = useState<Record<string, any>>({})
   const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
   const [signals, setSignals] = useState<Record<string, Signal>>({})
+  const [sigTried, setSigTried] = useState(false)
   const [userId, setUserId] = useState('')
   const [detail, setDetail] = useState<Holding | null>(null)
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
@@ -111,7 +112,7 @@ export default function DashboardApp({
     const ids = uniq(holdings.filter(h => h.kind === 'crypto' && h.cg_id).map(h => h.cg_id))
     if (!ids.length) return
     let active = true
-    fetch(`/api/signals?ids=${ids.join(',')}`).then(r => r.json()).then(d => { if (active) setSignals(d || {}) }).catch(() => {})
+    fetch(`/api/signals?ids=${ids.join(',')}`).then(r => r.json()).then(d => { if (active) setSignals(d || {}) }).catch(() => {}).finally(() => { if (active) setSigTried(true) })
     return () => { active = false }
   }, [holdings])
 
@@ -203,18 +204,33 @@ export default function DashboardApp({
 
   const usdSplit = (n: number) => { const s = usd(n); const i = s.lastIndexOf(','); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i)] }
   const [hi, cent] = usdSplit(t.patr); const res = t.patr - t.aportTotal
+  const rate = brlRate.tether
   const inFlows = flows.filter(f => f.kind === 'in'), outFlows = flows.filter(f => f.kind === 'out')
   const totIn = inFlows.reduce((s, f) => s + f.amount, 0), totOut = outFlows.reduce((s, f) => s + f.amount, 0)
-  const netAporte = totIn - totOut
   const pctRetirada = totIn ? totOut / totIn * 100 : 0
-  const avgDays = totIn ? inFlows.reduce((s, f) => s + daysSince(f.move_date || (f.created_at ? f.created_at.slice(0, 10) : '')) * f.amount, 0) / totIn : 0
-  const avgMonths = avgDays / 30.44, avgYears = avgDays / 365.25
-  const patrBrl = t.patr * brlRate.tether, aplicadoBrl = t.riskInv * brlRate.tether
-  const pctInvestido = netAporte > 0 ? aplicadoBrl / netAporte * 100 : 0
-  const plPeriodoPct = netAporte > 0 ? (patrBrl - netAporte) / netAporte * 100 : 0
-  const plAnual = avgYears > 0.02 ? plPeriodoPct / avgYears : plPeriodoPct
-  const plMensal = avgMonths > 0.05 ? plPeriodoPct / avgMonths : 0
-  const plDiario = avgDays > 0.5 ? plPeriodoPct / avgDays : 0
+  // capital real (custo) x patrimônio
+  const capInvestidoBrl = t.totalInv * rate, patrBrlF = t.patr * rate
+  const resultBrl = patrBrlF - capInvestidoBrl
+  const resultPct = t.totalInv > 0 ? (t.patr - t.totalInv) / t.totalInv * 100 : 0
+  // idade média ponderada das posições (transações + pools)
+  let wAge = 0, wSum = 0
+  txs.forEach(x => { const w = x.qty * x.buy_price; wAge += daysSince(x.buy_date) * w; wSum += w })
+  pools.forEach(pp => { wAge += daysSince(pp.entry_date) * pp.aporte; wSum += pp.aporte })
+  const avgDays = wSum ? wAge / wSum : 0, avgMonths = avgDays / 30.44, avgYears = avgDays / 365.25
+  const plPeriodoPct = resultPct
+  const plAnualPct = avgYears > 0.02 ? plPeriodoPct / avgYears : plPeriodoPct
+  const plMensalPct = avgMonths > 0.05 ? plPeriodoPct / avgMonths : 0
+  const plDiarioPct = avgDays > 0.5 ? plPeriodoPct / avgDays : 0
+  const plAnualBrl = avgYears > 0.02 ? resultBrl / avgYears : resultBrl
+  const plMensalBrl = avgMonths > 0.05 ? resultBrl / avgMonths : 0
+  const plDiarioBrl = avgDays > 0.5 ? resultBrl / avgDays : 0
+  const distrib = [
+    { n: 'Cripto', v: cryptoVal, c: '#FF2E9A' },
+    { n: 'Ações/ETFs', v: stockVal, c: '#7C5CFF' },
+    { n: 'Caixa', v: t.cashVal, c: '#9D7CFF' },
+    { n: 'Pools', v: poolsVal, c: '#2BFFC6' },
+  ].filter(x => x.v > 0)
+  const distTot = distrib.reduce((s, x) => s + x.v, 0) || 1
   const cryptoHoldings = priced.filter(h => h.kind === 'crypto' || h.kind === 'stock').slice().sort((a, b) => valOf(b) - valOf(a))
   const chColor = (v: any) => v == null ? 'var(--muted)' : v >= 0 ? 'var(--green)' : 'var(--red)'
   const chTxt = (v: any) => v == null ? '—' : pct(v)
@@ -340,33 +356,35 @@ export default function DashboardApp({
 
           {/* APORTES */}
           <section className={`screen ${tab === 'aportes' ? 'active' : ''}`}>
-            <div className="eyebrow">Fluxo de caixa</div>
+            <div className="eyebrow">Fluxo de caixa · visão geral</div>
             <div className="card">
-              <div className="eyebrow" style={{ marginBottom: 4 }}>Aportes & retiradas (R$)</div>
-              <div className="big-kv"><span className="k">Total aportado</span><span className="v num up">{brl(totIn)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {inFlows.length}x</span></span></div>
-              <div className="big-kv"><span className="k">Total retirado</span><span className="v num down">{brl(totOut)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {outFlows.length}x</span></span></div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>Capital & patrimônio (R$)</div>
+              <div className="big-kv"><span className="k">Capital investido (custo)</span><span className="v num">{brl(capInvestidoBrl)}</span></div>
+              <div className="big-kv"><span className="k">Patrimônio atual</span><span className="v num">{brl(patrBrlF)}</span></div>
+              <div className="big-kv"><span className="k">Resultado</span><span className={`v num ${resultBrl >= 0 ? 'up' : 'down'}`}>{(resultBrl >= 0 ? '+' : '-') + brl(Math.abs(resultBrl)).slice(3)} · {pct(resultPct)}</span></div>
+            </div>
+            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Onde está o capital</div>
+              {distrib.map((x, i) => (<div className="kv" key={i}><span className="k"><span className="dist-dot" style={{ background: x.c }} />{x.n}</span><span className="v num">{brl(x.v * rate)} · {fmt(x.v / distTot * 100, 0)}%</span></div>))}
+            </div>
+            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 8 }}>Tempo médio das posições</div>
+              <div className="trio"><div className="stat"><div className="k">Dias</div><div className="v num">{fmt(avgDays, 0)}</div></div><div className="stat"><div className="k">Meses</div><div className="v num">{fmt(avgMonths, 1)}</div></div><div className="stat"><div className="k">Anos</div><div className="v num">{fmt(avgYears, 1)}</div></div></div>
+            </div>
+            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Resultado por período</div>
+              <table className="pltable"><thead><tr><th></th><th>%</th><th>R$</th></tr></thead><tbody>
+                <tr><td>Período</td><td className={plPeriodoPct >= 0 ? 'up' : 'down'}>{pct(plPeriodoPct)}</td><td className={resultBrl >= 0 ? 'up' : 'down'}>{brl(resultBrl)}</td></tr>
+                <tr><td>Anual</td><td className={plAnualPct >= 0 ? 'up' : 'down'}>{pct(plAnualPct)}</td><td className={plAnualBrl >= 0 ? 'up' : 'down'}>{brl(plAnualBrl)}</td></tr>
+                <tr><td>Mensal</td><td className={plMensalPct >= 0 ? 'up' : 'down'}>{pct(plMensalPct)}</td><td className={plMensalBrl >= 0 ? 'up' : 'down'}>{brl(plMensalBrl)}</td></tr>
+                <tr><td>Diário</td><td className={plDiarioPct >= 0 ? 'up' : 'down'}>{pct(plDiarioPct)}</td><td className={plDiarioBrl >= 0 ? 'up' : 'down'}>{brl(plDiarioBrl)}</td></tr>
+              </tbody></table>
+            </div>
+            <div className="card section-gap">
+              <div className="eyebrow" style={{ marginBottom: 4 }}>Movimentos de caixa (R$)</div>
+              <div className="big-kv"><span className="k">Aportado</span><span className="v num up">{brl(totIn)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {inFlows.length}x</span></span></div>
+              <div className="big-kv"><span className="k">Retirado</span><span className="v num down">{brl(totOut)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {outFlows.length}x</span></span></div>
               <div className="big-kv"><span className="k">% de retiradas</span><span className="v num">{fmt(pctRetirada, 1)}%</span></div>
-              <div className="big-kv"><span className="k">Saldo líquido aportado</span><span className="v num">{brl(netAporte)}</span></div>
+              <div style={{ marginTop: 10 }}><button className="addbtn" onClick={() => openFlow(null)}>+ registrar aporte / retirada</button></div>
             </div>
-            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 8 }}>Tempo médio dos aportes</div>
-              <div className="trio">
-                <div className="stat"><div className="k">Dias</div><div className="v num">{fmt(avgDays, 0)}</div></div>
-                <div className="stat"><div className="k">Meses</div><div className="v num">{fmt(avgMonths, 1)}</div></div>
-                <div className="stat"><div className="k">Anos</div><div className="v num">{fmt(avgYears, 1)}</div></div>
-              </div>
-            </div>
-            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Resultado (P/L)</div>
-              <div className="big-kv"><span className="k">Patrimônio atual</span><span className="v num">{brl(patrBrl)}</span></div>
-              <div className="big-kv"><span className="k">% do aportado aplicado</span><span className="v num">{fmt(pctInvestido, 0)}%</span></div>
-              <div className="big-kv"><span className="k">P/L período</span><span className={`v num ${plPeriodoPct >= 0 ? 'up' : 'down'}`}>{pct(plPeriodoPct)}</span></div>
-              <div className="trio" style={{ marginTop: 10 }}>
-                <div className="stat"><div className="k">Anual</div><div className={`v num ${plAnual >= 0 ? 'up' : 'down'}`}>{pct(plAnual)}</div></div>
-                <div className="stat"><div className="k">Mensal</div><div className={`v num ${plMensal >= 0 ? 'up' : 'down'}`}>{pct(plMensal)}</div></div>
-                <div className="stat"><div className="k">Diário</div><div className={`v num ${plDiario >= 0 ? 'up' : 'down'}`}>{pct(plDiario)}</div></div>
-              </div>
-            </div>
-            <div style={{ marginTop: 12 }}><button className="addbtn" onClick={() => openFlow(null)}>+ registrar aporte / retirada</button></div>
-            {flows.length > 0 && <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Movimentos · toque p/ editar</div>
+            {flows.length > 0 && <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Extrato · toque p/ editar</div>
               {flows.slice().sort((a, b) => fdate(b).localeCompare(fdate(a))).map(f => { const d = daysSince(fdate(f)); return (
                 <div className="flow-item" key={f.id} onClick={() => openFlow(f)} style={{ cursor: 'pointer' }}>
                   <div className={`flow-ic ${f.kind === 'in' ? 'flow-in' : 'flow-out'}`}>{f.kind === 'in' ? '↓' : '↑'}</div>
@@ -441,7 +459,7 @@ export default function DashboardApp({
                       <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
                       <div className="sigrow"><span className="k">Médias</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
                     </div>
-                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>Analisando estrutura do gráfico…</p> : null}
+                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>

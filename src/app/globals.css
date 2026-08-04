@@ -314,3 +314,12 @@ select{font-family:'Inter';}
 .pt-cell{flex:1;text-align:center;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;padding:9px 4px;}
 .pt-cell span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
 .pt-cell b{font-family:'JetBrains Mono';font-weight:700;font-size:13px;display:block;margin-top:3px;}
+
+/* ---- v5 Fase2: fluxo de caixa completo ---- */
+.dist-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:8px;vertical-align:middle;box-shadow:0 0 8px currentColor;}
+.pltable{width:100%;border-collapse:collapse;}
+.pltable th{font-size:10px;color:var(--muted);text-transform:uppercase;text-align:right;padding:4px 0;font-weight:600;letter-spacing:.4px;}
+.pltable th:first-child{text-align:left;}
+.pltable td{font-family:'JetBrains Mono';font-size:13px;padding:9px 0;border-top:1px solid var(--line);text-align:right;font-weight:600;}
+.pltable td:first-child{text-align:left;color:var(--muted);font-family:'Inter';font-weight:400;font-size:12.5px;}
+.pltable td.up{color:var(--green);} .pltable td.down{color:var(--red);}
