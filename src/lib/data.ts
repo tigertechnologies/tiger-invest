@@ -122,3 +122,12 @@ export const DEFAULT_POOL: Omit<Pool, 'id' | 'user_id'> = {
   aporte: 2771.29, current_value: 1361.53, low_range: 3487.69, high_range: 4978.96,
   entry_date: '2025-08-30', fees: 13.19, pool_address: '', network: 'base',
 }
+
+// ---- v6: níveis personalizados ----
+export type Level = {
+  id?: string; user_id?: string
+  symbol: string
+  kind: 'support' | 'resistance'
+  price: number
+  note?: string
+}

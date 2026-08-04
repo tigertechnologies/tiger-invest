@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
 import {
   Holding, Flow, Transaction, Pool, Signal, DEFAULT_HOLDINGS, DEFAULT_POOL, BRL_RATE,
-  value as valOf, usd, pct, brl, fmt, daysSince,
+  value as valOf, usd, pct, brl, fmt, daysSince, Level,
 } from '@/lib/data'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas'
@@ -14,14 +14,16 @@ const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '�
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
 
 export default function DashboardApp({
-  userEmail, initialHoldings, initialFlows, initialTx, initialPools,
-}: { userEmail: string; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[] }) {
+  userEmail, initialHoldings, initialFlows, initialTx, initialPools, initialLevels,
+}: { userEmail: string; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[] }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [holdings, setHoldings] = useState<Holding[]>(initialHoldings)
   const [flows, setFlows] = useState<Flow[]>(initialFlows)
   const [txs, setTxs] = useState<Transaction[]>(initialTx)
   const [pools, setPools] = useState<Pool[]>(initialPools)
+  const [levels, setLevels] = useState<Level[]>(initialLevels)
+  const [levelForm, setLevelForm] = useState<any | null>(null)
   const [tab, setTab] = useState<Tab>('inicio')
   const [live, setLive] = useState<Record<string, any>>({})
   const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
@@ -44,16 +46,18 @@ export default function DashboardApp({
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
   const refetch = useCallback(async () => {
-    const [h, f, t, p] = await Promise.all([
+    const [h, f, t, p, l] = await Promise.all([
       supabase.from('holdings').select('*').order('sort', { ascending: true }),
       supabase.from('flows').select('*').order('created_at', { ascending: false }),
       supabase.from('transactions').select('*').order('buy_date', { ascending: true }),
       supabase.from('pools').select('*').order('created_at', { ascending: true }),
+      supabase.from('levels').select('*').order('price', { ascending: false }),
     ])
     if (h.data) setHoldings(h.data as Holding[])
     if (f.data) setFlows(f.data as Flow[])
     if (t.data) setTxs(t.data as Transaction[])
     if (p.data) setPools(p.data as Pool[])
+    if (l.data) setLevels(l.data as Level[])
   }, [supabase])
 
   // seed ÚNICO (gated por flag) — nunca reinjeta
@@ -251,6 +255,9 @@ export default function DashboardApp({
   const openBuy = (h: Holding | null) => setTxForm(h
     ? { symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, meta_pct: h.meta_pct, rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: live[h.cg_id]?.usd ?? h.price, stop_limit: '', target: '', isNew: false }
     : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true })
+  const openLevel = (symbol: string, l?: Level) => setLevelForm(l ? { ...l } : { symbol, kind: 'support', price: '', note: '' })
+  async function saveLevel() { const f = levelForm; if (!f) return; const payload = { user_id: userId, symbol: f.symbol, kind: f.kind, price: num(f.price), note: f.note || '' }; if (f.id) await supabase.from('levels').update(payload).eq('id', f.id); else await supabase.from('levels').insert(payload); setLevelForm(null); await refetch() }
+  async function delLevel(id: string) { await supabase.from('levels').delete().eq('id', id); setLevelForm(null); await refetch() }
   async function openRadarCoin(c: any) {
     setRadarDetail(c); setRadarSig(null); setRadarSigLoading(true)
     try { const r = await fetch(`/api/signals?ids=${c.id}`); const d = await r.json(); setRadarSig(d[c.id] || null) } catch {}
@@ -479,6 +486,24 @@ export default function DashboardApp({
                   <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<span style={{ marginLeft: 'auto' }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
 
                   {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
+                  {h.kind === 'crypto' && (() => {
+                    const myLevels = levels.filter(l => l.symbol === h.symbol).sort((a, b) => b.price - a.price)
+                    return (<div className="card" style={{ marginTop: 14 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: myLevels.length ? 8 : 0 }}>
+                        <div className="eyebrow" style={{ margin: 0 }}>Meus níveis</div>
+                        <button className="mini-add" onClick={() => openLevel(h.symbol)}>+ adicionar</button>
+                      </div>
+                      {myLevels.map(l => (
+                        <div className="lvlrow" key={l.id} onClick={() => openLevel(h.symbol, l)}>
+                          <span className={`lvltag ${l.kind === 'support' ? 'sup' : 'res'}`}>{l.kind === 'support' ? 'Suporte' : 'Resist.'}</span>
+                          <b className="num">{usd(l.price)}</b>
+                          <span className="lvlnote">{l.note}</span>
+                          <span className="lvldist num" style={{ color: l.price >= h.price ? 'var(--red)' : 'var(--green)' }}>{h.price ? ((l.price >= h.price ? '+' : '') + fmt((l.price / h.price - 1) * 100, 1) + '%') : ''}</span>
+                        </div>
+                      ))}
+                      {myLevels.length === 0 && <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>Fixe seus próprios suportes e resistências — eles complementam a análise do algoritmo com a sua leitura.</p>}
+                    </div>)
+                  })()}
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>
@@ -565,6 +590,18 @@ export default function DashboardApp({
                 {!radarSigLoading && !radarSig && <p className="foot-note" style={{ marginTop: 14 }}>Análise técnica indisponível para este ativo agora.</p>}
                 <div style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setRadarDetail(null)}>Fechar</button></div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* NÍVEIS: novo/editar */}
+        {levelForm && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setLevelForm(null) }}>
+            <div className="sheet"><div className="grabber" />
+              <h3>{levelForm.id ? 'Editar nível' : 'Novo nível'} · {levelForm.symbol}</h3>
+              <div className="field"><label>Tipo</label><select value={levelForm.kind} onChange={e => setLevelForm({ ...levelForm, kind: e.target.value })}><option value="support">Suporte</option><option value="resistance">Resistência</option></select></div>
+              <div className="grid2"><div className="field"><label>Preço US$</label><input inputMode="decimal" value={levelForm.price} onChange={e => setLevelForm({ ...levelForm, price: e.target.value })} /></div><div className="field"><label>Nota (opcional)</label><input value={levelForm.note} onChange={e => setLevelForm({ ...levelForm, note: e.target.value })} placeholder="ex: LTB semanal" /></div></div>
+              <div className="grid2" style={{ marginTop: 16 }}>{levelForm.id && <button className="btn ghost danger" onClick={() => delLevel(levelForm.id)}>Excluir</button>}<button className="btn ghost" onClick={() => setLevelForm(null)}>Cancelar</button><button className="btn" onClick={saveLevel}>Salvar</button></div>
             </div>
           </div>
         )}

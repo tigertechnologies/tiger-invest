@@ -32,10 +32,13 @@ export async function GET() {
   try {
     let d = await gecko('https://api.geckoterminal.com/api/v2/networks/trending_pools?page=1')
     if (!d?.data?.length) d = await gecko('https://api.geckoterminal.com/api/v2/networks/eth/trending_pools?page=1')
-    out.pools = (d?.data || []).slice(0, 10).map((p: any) => {
+    out.pools = (d?.data || []).map((p: any) => {
       const a = p.attributes || {}; const net = (p.id || '').split('_')[0]
       return { name: a.name || '', network: net, vol24: parseFloat(a.volume_usd?.h24 || '0'), ch24: parseFloat(a.price_change_percentage?.h24 || '0'), tvl: parseFloat(a.reserve_in_usd || '0') }
     })
+      .filter((x: any) => x.tvl >= 100000 && Math.abs(x.ch24) < 90)   // qualidade: TVL >= US$100K, sem rug/lixo
+      .sort((x: any, y: any) => y.vol24 - x.vol24)
+      .slice(0, 10)
   } catch {}
   return NextResponse.json(out)
 }
