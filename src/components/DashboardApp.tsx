@@ -30,6 +30,9 @@ export default function DashboardApp({
   const [radar, setRadar] = useState<any | null>(null)
   const [radarSeg, setRadarSeg] = useState<'top' | 'alts' | 'memes' | 'pools'>('top')
   const [radarLoading, setRadarLoading] = useState(false)
+  const [radarDetail, setRadarDetail] = useState<any | null>(null)
+  const [radarSig, setRadarSig] = useState<Signal | null>(null)
+  const [radarSigLoading, setRadarSigLoading] = useState(false)
   const [userId, setUserId] = useState('')
   const [detail, setDetail] = useState<Holding | null>(null)
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
@@ -248,6 +251,11 @@ export default function DashboardApp({
   const openBuy = (h: Holding | null) => setTxForm(h
     ? { symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, meta_pct: h.meta_pct, rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: live[h.cg_id]?.usd ?? h.price, stop_limit: '', target: '', isNew: false }
     : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true })
+  async function openRadarCoin(c: any) {
+    setRadarDetail(c); setRadarSig(null); setRadarSigLoading(true)
+    try { const r = await fetch(`/api/signals?ids=${c.id}`); const d = await r.json(); setRadarSig(d[c.id] || null) } catch {}
+    setRadarSigLoading(false)
+  }
   const openFlow = (f: Flow | null) => setFlowForm(f ? { id: f.id, kind: f.kind, amount: f.amount, move_date: f.move_date || (f.created_at ? f.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)) } : { kind: 'in', amount: '', move_date: new Date().toISOString().slice(0, 10) })
   const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '', pool_address: '', network: 'base' })
 
@@ -470,34 +478,7 @@ export default function DashboardApp({
                 <div className="sheet-scroll">
                   <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<span style={{ marginLeft: 'auto' }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
 
-                  {sg ? (<div className="sigcard">
-                    <div className={`verdict verdict-${sg.verdict.tone}`}>
-                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↑' : sg.verdict.tone === 'sell' ? '↓' : '≈'}</div>
-                      <div><b>{sg.verdict.label}</b><p>{sg.verdict.text}</p></div>
-                    </div>
-                    <div className={`struct struct-${sg.structure}`}><span>Estrutura</span><b>{sg.structure === 'baixa' ? 'TENDÊNCIA DE BAIXA' : sg.structure === 'alta' ? 'TENDÊNCIA DE ALTA' : 'LATERAL'} · {sg.structHint}</b></div>
-                    <div className="rr">
-                      <div className="rr-cell up"><span>Até resistência</span><b>+{fmt(sg.upside, 0)}%</b></div>
-                      <div className="rr-cell down"><span>Até suporte</span><b>-{fmt(sg.downside, 0)}%</b></div>
-                      <div className="rr-cell"><span>Risco/Retorno</span><b>{sg.rr > 0 ? '1:' + fmt(sg.rr, 1) : '—'}</b></div>
-                    </div>
-                    <div className="levels">
-                      <div className="lvl-col"><div className="lvl-h res">Resistências ▲</div>
-                        {sg.resistances.length ? sg.resistances.map((z, i) => (<div className="lvl" key={'r' + i}><b className="down">{usd(z.price)}</b><span>+{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
-                      <div className="lvl-col"><div className="lvl-h sup">Suportes ▼</div>
-                        {sg.supports.length ? sg.supports.map((z, i) => (<div className="lvl" key={'s' + i}><b className="up">{usd(z.price)}</b><span>-{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
-                    </div>
-                    <div className="triggers">
-                      <div className="trg trg-buy"><b>↑ Vira comprador</b><span>{sg.trigger.buy}</span></div>
-                      <div className="trg trg-sell"><b>↓ Continua baixa</b><span>{sg.trigger.sell}</span></div>
-                    </div>
-                    <div style={{ marginTop: 12 }}>
-                      <div className="sigrow"><span className="k">Ciclo (BMSB)</span><span className="v" style={{ color: sg.cyclePos === 'above' ? 'var(--green)' : sg.cyclePos === 'below' ? 'var(--red)' : '#F5A623' }}>{usd(sg.bmsbMid)}</span></div>
-                      <div className="sigrow"><span className="k">Confirmação</span><span className="v sighint">{sg.confirm}</span></div>
-                      <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
-                      <div className="sigrow"><span className="k">Médias</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
-                    </div>
-                  </div>) : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
+                  {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>
@@ -573,6 +554,21 @@ export default function DashboardApp({
           </div>
         )}
 
+        {/* RADAR: análise estrutural do ativo */}
+        {radarDetail && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setRadarDetail(null) }}>
+            <div className="sheet"><div className="grabber" />
+              <div className="sheet-scroll">
+                <h3><span className="qsym" style={{ width: 32, height: 32 }}>{radarDetail.image ? <img src={radarDetail.image} alt="" /> : (radarDetail.symbol || '?').slice(0, 3)}</span>{radarDetail.name}<span style={{ marginLeft: 'auto', fontFamily: 'JetBrains Mono', fontSize: 14 }}>{usd(radarDetail.price)}</span></h3>
+                {radarSigLoading && <p className="foot-note" style={{ marginTop: 14 }}>Analisando estrutura do gráfico…</p>}
+                {!radarSigLoading && radarSig && <SigBody sg={radarSig} />}
+                {!radarSigLoading && !radarSig && <p className="foot-note" style={{ marginTop: 14 }}>Análise técnica indisponível para este ativo agora.</p>}
+                <div style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setRadarDetail(null)}>Fechar</button></div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* EDIT CAIXA */}
         {editDraft && (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setEditDraft(null) }}>
@@ -585,5 +581,39 @@ export default function DashboardApp({
         )}
       </div>
     </>
+  )
+}
+
+
+function SigBody({ sg }: { sg: Signal }) {
+  return (
+    <div className="sigcard">
+                    <div className={`verdict verdict-${sg.verdict.tone}`}>
+                      <div className={`vic vic-${sg.verdict.tone}`}>{sg.verdict.tone === 'buy' ? '↑' : sg.verdict.tone === 'sell' ? '↓' : '≈'}</div>
+                      <div><b>{sg.verdict.label}</b><p>{sg.verdict.text}</p></div>
+                    </div>
+                    <div className={`struct struct-${sg.structure}`}><span>Estrutura</span><b>{sg.structure === 'baixa' ? 'TENDÊNCIA DE BAIXA' : sg.structure === 'alta' ? 'TENDÊNCIA DE ALTA' : 'LATERAL'} · {sg.structHint}</b></div>
+                    <div className="rr">
+                      <div className="rr-cell up"><span>Até resistência</span><b>+{fmt(sg.upside, 0)}%</b></div>
+                      <div className="rr-cell down"><span>Até suporte</span><b>-{fmt(sg.downside, 0)}%</b></div>
+                      <div className="rr-cell"><span>Risco/Retorno</span><b>{sg.rr > 0 ? '1:' + fmt(sg.rr, 1) : '—'}</b></div>
+                    </div>
+                    <div className="levels">
+                      <div className="lvl-col"><div className="lvl-h res">Resistências ▲</div>
+                        {sg.resistances.length ? sg.resistances.map((z, i) => (<div className="lvl" key={'r' + i}><b className="down">{usd(z.price)}</b><span>+{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
+                      <div className="lvl-col"><div className="lvl-h sup">Suportes ▼</div>
+                        {sg.supports.length ? sg.supports.map((z, i) => (<div className="lvl" key={'s' + i}><b className="up">{usd(z.price)}</b><span>-{fmt(z.dist, 0)}%{z.touches > 1 ? ` · ${z.touches}x` : ''}</span></div>)) : <div className="lvl"><span>—</span></div>}</div>
+                    </div>
+                    <div className="triggers">
+                      <div className="trg trg-buy"><b>↑ Vira comprador</b><span>{sg.trigger.buy}</span></div>
+                      <div className="trg trg-sell"><b>↓ Continua baixa</b><span>{sg.trigger.sell}</span></div>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <div className="sigrow"><span className="k">Ciclo (BMSB)</span><span className="v" style={{ color: sg.cyclePos === 'above' ? 'var(--green)' : sg.cyclePos === 'below' ? 'var(--red)' : '#F5A623' }}>{usd(sg.bmsbMid)}</span></div>
+                      <div className="sigrow"><span className="k">Confirmação</span><span className="v sighint">{sg.confirm}</span></div>
+                      <div className="sigrow"><span className="k">RSI (14)</span><span className="v">{sg.rsi != null ? fmt(sg.rsi, 0) : '—'} <span className="sighint">· {sg.rsiHint}</span></span></div>
+                      <div className="sigrow"><span className="k">Médias</span><span className="v">{sg.maAbove}/3 <span className="sighint">· {sg.maHint}</span></span></div>
+                    </div>
+                  </div>
   )
 }
