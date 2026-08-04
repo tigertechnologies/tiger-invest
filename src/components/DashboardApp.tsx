@@ -8,7 +8,7 @@ import {
   value as valOf, usd, pct, brl, fmt, daysSince,
 } from '@/lib/data'
 
-type Tab = 'inicio' | 'carteira' | 'cotacao' | 'pools' | 'aportes' | 'metas'
+type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
@@ -27,6 +27,9 @@ export default function DashboardApp({
   const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
   const [signals, setSignals] = useState<Record<string, Signal>>({})
   const [sigTried, setSigTried] = useState(false)
+  const [radar, setRadar] = useState<any | null>(null)
+  const [radarSeg, setRadarSeg] = useState<'top' | 'alts' | 'memes' | 'pools'>('top')
+  const [radarLoading, setRadarLoading] = useState(false)
   const [userId, setUserId] = useState('')
   const [detail, setDetail] = useState<Holding | null>(null)
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
@@ -125,6 +128,13 @@ export default function DashboardApp({
       }
     })
   }, [pools])
+
+  useEffect(() => {
+    if (tab === 'radar' && !radar && !radarLoading) {
+      setRadarLoading(true)
+      fetch('/api/radar').then(r => r.json()).then(d => setRadar(d)).catch(() => {}).finally(() => setRadarLoading(false))
+    }
+  }, [tab, radar, radarLoading])
 
   const ph = useCallback((h: Holding): Holding => (h.cg_id && live[h.cg_id]?.usd) ? { ...h, price: live[h.cg_id].usd } : h, [live])
   const priced = useMemo(() => holdings.map(ph), [holdings, ph])
@@ -403,6 +413,33 @@ export default function DashboardApp({
             })}</div>
           </section>
 
+          {/* RADAR */}
+          <section className={`screen ${tab === 'radar' ? 'active' : ''}`}>
+            <div className="eyebrow">Radar de mercado · cardápio</div>
+            <div className="segbar">
+              {([['top', 'Top'], ['alts', 'Altcoins'], ['memes', 'Memes'], ['pools', 'Pools']] as [string, string][]).map(([k, l]) => (
+                <button key={k} className={radarSeg === k ? 'seg on' : 'seg'} onClick={() => setRadarSeg(k as any)}>{l}</button>
+              ))}
+            </div>
+            {radarLoading && <p className="foot-note">Carregando mercado…</p>}
+            {!radarLoading && radar && radarSeg !== 'pools' && (radar[radarSeg] || []).map((c: any, i: number) => (
+              <div className="qrow" key={i}>
+                <div className="qsym">{c.image ? <img src={c.image} alt="" /> : c.symbol.slice(0, 3)}</div>
+                <div className="qname"><b>{c.name}</b><span>{c.symbol} · vol {abbr(c.vol)}</span></div>
+                <div className="qprice"><div className="p">{usd(c.price)}</div><div className="qchg"><span style={{ color: c.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(c.ch24 || 0)} 24h</span>{c.ch7d != null && <span style={{ color: c.ch7d >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 8 }}>{pct(c.ch7d)} 7d</span>}</div></div>
+              </div>
+            ))}
+            {!radarLoading && radar && radarSeg === 'pools' && (radar.pools || []).map((p: any, i: number) => (
+              <div className="qrow" key={i}>
+                <div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#7C5CFF)' }}>{(p.network || '').slice(0, 3).toUpperCase()}</div>
+                <div className="qname"><b>{p.name}</b><span>{p.network} · TVL {abbr(p.tvl)}</span></div>
+                <div className="qprice"><div className="p">{abbr(p.vol24)}</div><div className="qchg" style={{ color: p.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(p.ch24 || 0)} 24h</div></div>
+              </div>
+            ))}
+            {!radarLoading && radar && radarSeg !== 'pools' && (!radar[radarSeg] || radar[radarSeg].length === 0) && <p className="foot-note">Sem dados agora — tente novamente em instantes.</p>}
+            <p className="foot-note">Dados de mercado (CoinGecko / GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada ativo antes de investir.</p>
+          </section>
+
           <p className="foot-note"><b style={{color:'var(--pink-bright)',fontFamily:'Sora'}}>Tiger Invest</b> · Não é recomendação de investimento. Todo e qualquer investimento é por conta e risco do usuário — estude os ativos antes de aplicar seu capital.</p>
         </div>
 
@@ -411,6 +448,7 @@ export default function DashboardApp({
             ['inicio', 'Início', <path key="a" d="M3 11l9-8 9 8M5 10v10h14V10" />],
             ['carteira', 'Carteira', <><rect key="a" x="3" y="6" width="18" height="13" rx="2" /><path key="b" d="M16 12h3" /></>],
             ['cotacao', 'Cotação', <path key="a" d="M4 18l5-6 4 3 6-8M4 18h16" />],
+            ['radar', 'Radar', <><circle key="a" cx="12" cy="12" r="9" /><circle key="b" cx="12" cy="12" r="4.5" /><path key="c" d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>],
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
             ['aportes', 'Aportes', <><path key="a" d="M7 17V9m0 0l-3 3m3-3l3 3" /><path key="b" d="M17 7v8m0 0l3-3m-3 3l-3-3" /></>],
             ['metas', 'Metas', <><circle key="a" cx="12" cy="12" r="8" /><circle key="b" cx="12" cy="12" r="3.2" /></>],

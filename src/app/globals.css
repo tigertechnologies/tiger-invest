@@ -323,3 +323,9 @@ select{font-family:'Inter';}
 .pltable td{font-family:'JetBrains Mono';font-size:13px;padding:9px 0;border-top:1px solid var(--line);text-align:right;font-weight:600;}
 .pltable td:first-child{text-align:left;color:var(--muted);font-family:'Inter';font-weight:400;font-size:12.5px;}
 .pltable td.up{color:var(--green);} .pltable td.down{color:var(--red);}
+
+/* ---- v6 Fase3: radar ---- */
+.segbar{display:flex;gap:6px;margin:2px 0 14px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:12px;padding:4px;}
+.seg{flex:1;background:none;border:none;color:var(--muted);font-family:'Sora';font-weight:600;font-size:12px;padding:9px 4px;border-radius:9px;cursor:pointer;}
+.seg.on{background:linear-gradient(135deg,var(--pink),var(--purple));color:#fff;box-shadow:0 0 14px rgba(255,46,154,.4);}
+.nav{overflow-x:auto;}
