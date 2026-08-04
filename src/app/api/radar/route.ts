@@ -20,7 +20,7 @@ async function gecko(url: string) { const r = await fetch(url, { next: { revalid
 
 export async function GET() {
   const out: any = { top: [], alts: [], memes: [], pools: [] }
-  try { out.top = (await markets('vs_currency=usd&order=market_cap_desc&per_page=10&page=1&price_change_percentage=24h,7d')).map(mapCoin) } catch {}
+  try { const tp = await markets('vs_currency=usd&order=market_cap_desc&per_page=15&page=1&price_change_percentage=24h,7d'); out.top = tp.map(mapCoin).filter((c: any) => !STABLE.has(c.symbol.toLowerCase())).slice(0, 10) } catch {}
   try {
     const a = await markets('vs_currency=usd&order=market_cap_desc&per_page=40&page=1&price_change_percentage=24h,7d')
     out.alts = a.map(mapCoin).filter((c: any) => !STABLE.has(c.symbol.toLowerCase()) && !MAJORS.has(c.symbol.toLowerCase())).slice(0, 10)
@@ -36,7 +36,12 @@ export async function GET() {
       const a = p.attributes || {}; const net = (p.id || '').split('_')[0]
       return { name: a.name || '', network: net, vol24: parseFloat(a.volume_usd?.h24 || '0'), ch24: parseFloat(a.price_change_percentage?.h24 || '0'), tvl: parseFloat(a.reserve_in_usd || '0') }
     })
-      .filter((x: any) => x.tvl >= 100000 && Math.abs(x.ch24) < 90)   // qualidade: TVL >= US$100K, sem rug/lixo
+      .filter((x: any) => {
+        const parts = (x.name || '').toUpperCase().split('/').map((z: string) => z.trim().split(' ')[0])
+        const BLUE = ['WETH', 'ETH', 'WBTC', 'BTC', 'CBBTC', 'SOL', 'WSOL', 'USDC', 'USDT', 'DAI', 'WBNB', 'BNB', 'MATIC', 'ARB', 'OP', 'AVAX', 'LINK']
+        const hasBlue = parts.some((z: string) => BLUE.includes(z))
+        return x.tvl >= 250000 && Math.abs(x.ch24) < 60 && hasBlue   // consolidado: 1 lado blue-chip, TVL >= US$250K
+      })
       .sort((x: any, y: any) => y.vol24 - x.vol24)
       .slice(0, 10)
   } catch {}
