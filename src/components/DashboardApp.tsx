@@ -25,6 +25,7 @@ export default function DashboardApp({
   const [levels, setLevels] = useState<Level[]>(initialLevels)
   const [levelForm, setLevelForm] = useState<any | null>(null)
   const [alertsOpen, setAlertsOpen] = useState(false)
+  const [stockLive, setStockLive] = useState<Record<string, { price: number; ch24: number | null }>>({})
   const [tab, setTab] = useState<Tab>('inicio')
   const [live, setLive] = useState<Record<string, any>>({})
   const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
@@ -144,7 +145,20 @@ export default function DashboardApp({
     }
   }, [tab, radar, radarLoading])
 
-  const ph = useCallback((h: Holding): Holding => (h.cg_id && live[h.cg_id]?.usd) ? { ...h, price: live[h.cg_id].usd } : h, [live])
+  useEffect(() => {
+    const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
+    if (!syms.length) return
+    let active = true
+    const load = () => fetch(`/api/stocks?symbols=${syms.join(',')}`).then(r => r.json()).then(d => { if (active) setStockLive(d || {}) }).catch(() => {})
+    load(); const t = setInterval(load, 60000)
+    return () => { active = false; clearInterval(t) }
+  }, [holdings])
+
+  const ph = useCallback((h: Holding): Holding => {
+    if (h.cg_id && live[h.cg_id]?.usd) return { ...h, price: live[h.cg_id].usd }
+    if (h.kind === 'stock' && stockLive[h.symbol]?.price) return { ...h, price: stockLive[h.symbol].price }
+    return h
+  }, [live, stockLive])
   const priced = useMemo(() => holdings.map(ph), [holdings, ph])
 
   // ---- ALERTAS: varre preços ao vivo vs níveis/alvos/stops/range ----
@@ -369,6 +383,16 @@ export default function DashboardApp({
                 <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▲ COMPRA' : signals[h.cg_id].verdict.tone === 'sell' ? '▼ VENDA' : '● CAUTELA'}</span>)}</div>
                 <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
               </div>) })}
+            {priced.filter(h => h.kind === 'stock').length > 0 && <>
+              <div className="qsection">Ações / ETFs</div>
+              {priced.filter(h => h.kind === 'stock').map(h => { const S = stockLive[h.symbol]; return (
+                <div className="qrow" key={h.id}>
+                  <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
+                  <div className="qname"><b>{h.name}</b><span>{h.symbol}</span></div>
+                  <div className="qprice"><div className="p">{usd(h.price)}</div><div className="qchg" style={{ color: S?.ch24 == null ? 'var(--muted)' : S.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{S?.ch24 == null ? 'sem chave' : pct(S.ch24) + ' dia'}</div></div>
+                </div>
+              ) })}
+            </>}
             <div className="qsection">Câmbio (R$)</div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#158f6f)' }}>USD</div><div className="qname"><b>Dólar</b><span>USD / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#26A17B,#0f6b4f)' }}>USDT</div><div className="qname"><b>Tether</b><span>USDT / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
