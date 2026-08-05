@@ -40,6 +40,8 @@ export default function DashboardApp({
   const [userId, setUserId] = useState('')
   const [detail, setDetail] = useState<Holding | null>(null)
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
+  const [cashInput, setCashInput] = useState('')
+  const [assetEdit, setAssetEdit] = useState<any | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
@@ -253,7 +255,9 @@ export default function DashboardApp({
   }
   async function delTx(id: string, h: Holding) { await supabase.from('transactions').delete().eq('id', id); await recompute(h.symbol, h.name, h.cg_id, h.color, h.meta_pct); await refetch() }
   async function delAsset(h: Holding) { await supabase.from('transactions').delete().eq('symbol', h.symbol); if (h.id) await supabase.from('holdings').delete().eq('id', h.id); setDetail(null); await refetch() }
-  async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: editDraft.current_value }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
+  async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: num(cashInput) }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
+  const openAssetEdit = (h: Holding) => setAssetEdit({ id: h.id, name: h.name, symbol: h.symbol, cg_id: h.cg_id, meta_pct: String(h.meta_pct ?? '') })
+  async function saveAssetEdit() { const f = assetEdit; if (!f?.id) return; await supabase.from('holdings').update({ name: f.name, cg_id: f.cg_id, meta_pct: num(f.meta_pct) }).eq('id', f.id); setAssetEdit(null); setDetail(null); await refetch() }
   const fdate = (f: Flow) => f.move_date || (f.created_at ? f.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))
   const abbr = (n: number) => { const a = Math.abs(n); return '$' + (a >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (n / 1e3).toFixed(0) + 'K' : n.toFixed(0)) }
   async function saveFlow() { const f = flowForm; if (!f) return; const payload = { user_id: userId, kind: f.kind, amount: num(f.amount), move_date: f.move_date }; if (f.id) await supabase.from('flows').update(payload).eq('id', f.id); else await supabase.from('flows').insert(payload); setFlowForm(null); await refetch() }
@@ -371,7 +375,7 @@ export default function DashboardApp({
             {cryptoList.map(assetRow)}
             {stockList.length > 0 && (<><div className="niche-h" style={{ marginTop: 18 }}>Ações / ETFs · <b>{usd(stockVal)}</b></div>{stockList.map(assetRow)}</>)}
             <button className="addbtn" onClick={() => openBuy(null)}>+ registrar compra / novo ativo</button>
-            <div className="card section-gap">{holdings.filter(h => h.kind === 'cash').map(h => (<div className="kv" key={h.id} onClick={() => setEditDraft({ ...h })} style={{ cursor: 'pointer' }}><span className="k">{h.name}</span><span className="v num">{usd(h.current_value ?? 0)}</span></div>))}</div>
+            <div className="card section-gap">{holdings.filter(h => h.kind === 'cash').map(h => (<div className="kv" key={h.id} onClick={() => { setEditDraft({ ...h }); setCashInput(String(h.current_value ?? 0).replace('.', ',')) }} style={{ cursor: 'pointer' }}><span className="k">{h.name}</span><span className="v num">{usd(h.current_value ?? 0)}</span></div>))}</div>
           </section>
 
           {/* COTAÇÃO */}
@@ -545,7 +549,7 @@ export default function DashboardApp({
             <div className="modal" onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
               <div className="sheet"><div className="grabber" />
                 <div className="sheet-scroll">
-                  <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<span style={{ marginLeft: 'auto' }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
+                  <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<button className="mini-add" style={{ marginLeft: 'auto' }} onClick={() => openAssetEdit(h)}>✎ editar</button><span style={{ marginLeft: 8 }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
 
                   {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
                   {h.kind === 'crypto' && (() => {
@@ -692,8 +696,24 @@ export default function DashboardApp({
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setEditDraft(null) }}>
             <div className="sheet"><div className="grabber" />
               <h3>{editDraft.name}</h3>
-              <div className="field"><label>Valor atual U$</label><input inputMode="decimal" value={editDraft.current_value ?? 0} onChange={e => setEditDraft({ ...editDraft, current_value: num(e.target.value) })} /></div>
+              <div className="field"><label>Valor atual U$</label><input inputMode="decimal" value={cashInput} onChange={e => setCashInput(e.target.value)} placeholder="0,00" /></div>
               <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setEditDraft(null)}>Cancelar</button><button className="btn" onClick={saveEdit}>Salvar</button></div>
+            </div>
+          </div>
+        )}
+
+        {/* EDIT ATIVO: meta / nome / id coingecko */}
+        {assetEdit && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setAssetEdit(null) }}>
+            <div className="sheet"><div className="grabber" />
+              <h3>Editar {assetEdit.symbol}</h3>
+              <div className="grid2">
+                <div className="field"><label>Nome</label><input value={assetEdit.name} onChange={e => setAssetEdit({ ...assetEdit, name: e.target.value })} /></div>
+                <div className="field"><label>Meta %</label><input inputMode="decimal" value={assetEdit.meta_pct} onChange={e => setAssetEdit({ ...assetEdit, meta_pct: e.target.value })} placeholder="0" /></div>
+              </div>
+              <div className="field"><label>ID CoinGecko</label><input value={assetEdit.cg_id} onChange={e => setAssetEdit({ ...assetEdit, cg_id: e.target.value })} placeholder="ethereum" /></div>
+              <p className="foot-note" style={{ marginTop: 10 }}>Ajuste a meta a qualquer momento, sem registrar compra. O símbolo ({assetEdit.symbol}) não é editável aqui para não desvincular o histórico de compras.</p>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setAssetEdit(null)}>Cancelar</button><button className="btn" onClick={saveAssetEdit}>Salvar</button></div>
             </div>
           </div>
         )}
