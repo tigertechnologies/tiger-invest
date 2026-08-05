@@ -1,13 +1,14 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import RegisterSW from '@/components/RegisterSW'
+import InstallPrompt from '@/components/InstallPrompt'
 
 export const metadata: Metadata = {
   title: 'Tiger Invest',
   description: 'Controle profissional de ativos — cripto, acoes e pools.',
   manifest: '/manifest.json',
-  applicationName: 'Tiger Invest',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Tiger Invest' },
+  applicationName: 'TIGER INVEST',
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'TIGER INVEST' },
   icons: { icon: '/icon-192.png', apple: '/apple-touch-icon.png' },
 }
 export const viewport: Viewport = {
@@ -29,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </head>
-      <body>{children}<RegisterSW /></body>
+      <body>{children}<RegisterSW /><InstallPrompt /></body>
     </html>
   )
 }
