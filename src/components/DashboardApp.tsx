@@ -24,6 +24,7 @@ export default function DashboardApp({
   const [pools, setPools] = useState<Pool[]>(initialPools)
   const [levels, setLevels] = useState<Level[]>(initialLevels)
   const [levelForm, setLevelForm] = useState<any | null>(null)
+  const [alertsOpen, setAlertsOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('inicio')
   const [live, setLive] = useState<Record<string, any>>({})
   const [brlRate, setBrlRate] = useState({ tether: BRL_RATE, usdc: BRL_RATE })
@@ -145,6 +146,40 @@ export default function DashboardApp({
 
   const ph = useCallback((h: Holding): Holding => (h.cg_id && live[h.cg_id]?.usd) ? { ...h, price: live[h.cg_id].usd } : h, [live])
   const priced = useMemo(() => holdings.map(ph), [holdings, ph])
+
+  // ---- ALERTAS: varre preços ao vivo vs níveis/alvos/stops/range ----
+  const alerts = useMemo(() => {
+    const out: { id: string; tone: 'buy' | 'sell' | 'warn'; icon: string; title: string; text: string }[] = []
+    // níveis personalizados atingidos
+    for (const l of levels) {
+      const h = priced.find(x => x.symbol === l.symbol && x.kind === 'crypto')
+      if (!h || !h.price) continue
+      const near = Math.abs(h.price - l.price) / l.price <= 0.02
+      if (near) out.push({ id: 'lv' + l.id, tone: l.kind === 'support' ? 'buy' : 'sell', icon: l.kind === 'support' ? '▼' : '▲', title: `${l.symbol} no seu ${l.kind === 'support' ? 'suporte' : 'resistência'}`, text: `${usd(h.price)} ~ ${usd(l.price)}${l.note ? ' · ' + l.note : ''}` })
+    }
+    // alvo / stop das compras
+    const bySym: Record<string, { target: number; stop: number; name: string; cg: string }> = {}
+    for (const x of txs) {
+      if (!bySym[x.symbol]) bySym[x.symbol] = { target: 0, stop: 0, name: x.name, cg: x.cg_id }
+      if (x.target > bySym[x.symbol].target) bySym[x.symbol].target = x.target
+      if (x.stop_limit > 0 && (bySym[x.symbol].stop === 0 || x.stop_limit > bySym[x.symbol].stop)) bySym[x.symbol].stop = x.stop_limit
+    }
+    for (const sym of Object.keys(bySym)) {
+      const h = priced.find(x => x.symbol === sym && x.kind === 'crypto'); if (!h || !h.price) continue
+      const b = bySym[sym]
+      if (b.target > 0 && h.price >= b.target) out.push({ id: 'tg' + sym, tone: 'sell', icon: '🎯', title: `${sym} atingiu o alvo`, text: `${usd(h.price)} ≥ alvo ${usd(b.target)} — considere realizar` })
+      if (b.stop > 0 && h.price <= b.stop) out.push({ id: 'st' + sym, tone: 'sell', icon: '🛑', title: `${sym} atingiu o stop`, text: `${usd(h.price)} ≤ stop ${usd(b.stop)} — reavalie a posição` })
+    }
+    // pools fora / perto de sair do range
+    for (const p of pools) {
+      const price = live[p.par1_cg_id]?.usd ?? 0
+      if (!price || !p.low_range || !p.high_range) continue
+      const span = p.high_range - p.low_range
+      if (price < p.low_range || price > p.high_range) out.push({ id: 'plo' + p.id, tone: 'warn', icon: '⚠', title: `Pool ${p.par1}/${p.par2} FORA do range`, text: `${p.par1} em ${fmt(price)} · deixou de gerar taxas` })
+      else if (span > 0) { const pos = (price - p.low_range) / span * 100; if (pos < 10 || pos > 90) out.push({ id: 'pln' + p.id, tone: 'warn', icon: '⚠', title: `Pool ${p.par1}/${p.par2} perto de sair`, text: `${p.par1} em ${fmt(price)} · chegando na borda da faixa` }) }
+    }
+    return out
+  }, [priced, levels, txs, pools, live])
   const poolsVal = useMemo(() => pools.reduce((s, p) => s + p.current_value, 0), [pools])
   const poolsInv = useMemo(() => pools.reduce((s, p) => s + p.aporte, 0), [pools])
 
@@ -285,7 +320,10 @@ export default function DashboardApp({
         <div className="top">
           <div className="mark" aria-hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.3L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.7L12 2z" /></svg></div>
           <div className="brand"><b>Tiger Invest</b><span>Controle de Ativos</span></div>
-          <div className="top-actions"><div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button></div>
+          <div className="top-actions">
+            <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{alerts.length > 0 && <span className="bell-badge">{alerts.length}</span>}</button>
+            <div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button>
+          </div>
         </div>
 
         <div className="scroll">
@@ -589,6 +627,25 @@ export default function DashboardApp({
                 {!radarSigLoading && radarSig && <SigBody sg={radarSig} />}
                 {!radarSigLoading && !radarSig && <p className="foot-note" style={{ marginTop: 14 }}>Análise técnica indisponível para este ativo agora.</p>}
                 <div style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setRadarDetail(null)}>Fechar</button></div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ALERTAS */}
+        {alertsOpen && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setAlertsOpen(false) }}>
+            <div className="sheet"><div className="grabber" />
+              <div className="sheet-scroll">
+                <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ width: 22, height: 22 }}><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>Alertas</h3>
+                {alerts.length === 0 && <p className="foot-note" style={{ marginTop: 18 }}>Nenhum alerta agora. Você é avisado quando o preço bate num nível seu, no alvo/stop de uma compra, ou quando uma pool sai do range.</p>}
+                {alerts.map(a => (
+                  <div className={`alert-item alert-${a.tone}`} key={a.id}>
+                    <div className="alert-ic">{a.icon}</div>
+                    <div className="alert-t"><b>{a.title}</b><span>{a.text}</span></div>
+                  </div>
+                ))}
+                <div style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setAlertsOpen(false)}>Fechar</button></div>
               </div>
             </div>
           </div>

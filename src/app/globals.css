@@ -339,3 +339,15 @@ select{font-family:'Inter';}
 .lvlrow b{font-family:'JetBrains Mono';font-weight:600;font-size:13px;}
 .lvlnote{flex:1;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lvldist{font-family:'JetBrains Mono';font-size:11.5px;font-weight:600;}
+
+/* ---- v6 Fase D: alertas ---- */
+.bell{position:relative;background:none;border:1px solid var(--line);color:var(--muted);width:34px;height:34px;border-radius:10px;display:grid;place-items:center;cursor:pointer;}
+.bell svg{width:18px;height:18px;}
+.bell:hover{border-color:var(--pink);color:var(--pink);}
+.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--pink);color:#fff;font-size:10px;font-weight:700;font-family:'JetBrains Mono';display:grid;place-items:center;box-shadow:0 0 10px var(--pink);}
+.alert-item{display:flex;gap:11px;align-items:center;padding:12px;border-radius:12px;margin-top:9px;border:1px solid var(--line);}
+.alert-ic{width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;font-size:16px;}
+.alert-buy{background:rgba(43,255,154,.07);border-color:rgba(43,255,154,.25);} .alert-buy .alert-ic{background:rgba(43,255,154,.14);color:var(--green);}
+.alert-sell{background:rgba(255,77,109,.07);border-color:rgba(255,77,109,.25);} .alert-sell .alert-ic{background:rgba(255,77,109,.14);color:var(--red);}
+.alert-warn{background:rgba(245,166,35,.07);border-color:rgba(245,166,35,.25);} .alert-warn .alert-ic{background:rgba(245,166,35,.14);color:#F5A623;}
+.alert-t{flex:1;} .alert-t b{font-size:13.5px;font-weight:600;display:block;} .alert-t span{font-size:11.5px;color:var(--muted);font-family:'JetBrains Mono';}
