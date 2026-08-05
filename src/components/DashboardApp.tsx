@@ -273,7 +273,7 @@ export default function DashboardApp({
   async function signOut() { await supabase.auth.signOut(); router.push('/login') }
 
   const usdSplit = (n: number) => { const s = usd(n); const i = s.lastIndexOf(','); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i)] }
-  const [hi, cent] = usdSplit(t.patr); const res = t.patr - t.aportTotal
+  const [hi, cent] = usdSplit(t.patr); const res = t.pl
   const rate = brlRate.tether
   const inFlows = flows.filter(f => f.kind === 'in'), outFlows = flows.filter(f => f.kind === 'out')
   const totIn = inFlows.reduce((s, f) => s + f.amount, 0), totOut = outFlows.reduce((s, f) => s + f.amount, 0)
@@ -352,7 +352,7 @@ export default function DashboardApp({
               <div className="hero-value num">{hi}<span className="cents">{cent}</span></div>
               <span className={`pill ${t.pl >= 0 ? 'up' : 'down'}`}>{t.pl >= 0 ? '▲' : '▼'} {pct(plpct)} · {(t.pl >= 0 ? '+' : '-') + usd(Math.abs(t.pl)).slice(1)}</span>
               <div className="hero-row">
-                <div className="hero-mini"><div className="k">Aportado</div><div className="v num">{usd(t.aportTotal)}</div></div>
+                <div className="hero-mini"><div className="k">Investido</div><div className="v num">{usd(t.riskInv)}</div></div>
                 <div className="hero-mini"><div className="k">Resultado</div><div className={`v num ${res >= 0 ? 'up' : 'down'}`}>{(res >= 0 ? '+' : '-') + usd(Math.abs(res)).slice(1)}</div></div>
               </div>
             </div>
@@ -488,9 +488,12 @@ export default function DashboardApp({
           {/* METAS */}
           <section className={`screen ${tab === 'metas' ? 'active' : ''}`}>
             <div className="eyebrow">Meta de aporte vs. real</div>
-            <div className="card">{priced.filter(h => h.meta_pct > 0).sort((a, b) => b.meta_pct - a.meta_pct).map((h, i) => {
+            <div className="card">{priced.filter(h => h.meta_pct > 0).sort((a, b) => (b.kind === 'cash' ? 1 : 0) - (a.kind === 'cash' ? 1 : 0) || b.meta_pct - a.meta_pct).map((h, i) => {
               const real = t.patr ? valOf(h) / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1), gap = real - h.meta_pct
-              return (<div key={h.id} style={{ padding: '10px 0', borderTop: i > 0 ? '1px solid var(--line)' : undefined }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span style={{ fontWeight: 600, fontSize: 13.5 }}>{h.symbol}</span><span className="num" style={{ fontSize: 12, color: Math.abs(gap) < 0.5 ? 'var(--muted)' : (gap < 0 ? 'var(--pink)' : 'var(--red)') }}>{gap < 0 ? 'faltam ' : 'sobra '}{fmt(Math.abs(gap), 1)}%</span></div><div className="metabar" style={{ marginTop: 8 }}><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>)
+              const cashSurplus = h.kind === 'cash' && gap > 0.5
+              const gapColor = cashSurplus ? 'var(--green)' : (Math.abs(gap) < 0.5 ? 'var(--muted)' : (gap < 0 ? 'var(--pink)' : 'var(--red)'))
+              const gapLabel = cashSurplus ? 'disponível pra alocar ' : (gap < 0 ? 'faltam ' : 'sobra ')
+              return (<div key={h.id} style={{ padding: '10px 0', borderTop: i > 0 ? '1px solid var(--line)' : undefined }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span style={{ fontWeight: 600, fontSize: 13.5 }}>{h.symbol}</span><span className="num" style={{ fontSize: 12, color: gapColor }}>{gapLabel}{fmt(Math.abs(gap), 1)}%</span></div><div className="metabar" style={{ marginTop: 8 }}><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%`, ...(cashSurplus ? { background: 'linear-gradient(90deg,#12b981,var(--green))', boxShadow: '0 0 12px rgba(43,255,154,.5)' } : {}) }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>)
             })}</div>
           </section>
 
