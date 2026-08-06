@@ -14,10 +14,21 @@ const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '�
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
 
 export default function DashboardApp({
-  userEmail, initialHoldings, initialFlows, initialTx, initialPools, initialLevels,
-}: { userEmail: string; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[] }) {
+  userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels,
+}: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[] }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
+  // --- Gate por plano ---
+  const RANK: Record<string, number> = { start: 1, pro: 2, alpha: 3 }
+  const rank = RANK[plan] || 1
+  const has = (min: number) => rank >= min
+  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3 }
+  const PLAN_NAME: Record<number, string> = { 2: 'TIGER PRO', 3: 'TIGER ALPHA' }
+  const [upgrade, setUpgrade] = useState<{ tier: number; feature: string } | null>(null)
+  // Aviso de renovação (aparece 5 dias antes, até o dia do vencimento)
+  const planLabel = ({ start: 'TIGER START', pro: 'TIGER PRO', alpha: 'TIGER ALPHA' } as Record<string, string>)[plan] || 'plano'
+  const daysToEnd = periodEnd ? Math.ceil((new Date(periodEnd).getTime() - Date.now()) / 86400000) : null
+  const showRenew = daysToEnd != null && daysToEnd >= 0 && daysToEnd <= 5
   const [holdings, setHoldings] = useState<Holding[]>(initialHoldings)
   const [flows, setFlows] = useState<Flow[]>(initialFlows)
   const [txs, setTxs] = useState<Transaction[]>(initialTx)
@@ -34,6 +45,8 @@ export default function DashboardApp({
   const [radar, setRadar] = useState<any | null>(null)
   const [radarSeg, setRadarSeg] = useState<'top' | 'alts' | 'memes' | 'pools'>('top')
   const [radarLoading, setRadarLoading] = useState(false)
+  const [poolNet, setPoolNet] = useState('all')
+  const [poolsLoading, setPoolsLoading] = useState(false)
   const [radarDetail, setRadarDetail] = useState<any | null>(null)
   const [radarSig, setRadarSig] = useState<Signal | null>(null)
   const [radarSigLoading, setRadarSigLoading] = useState(false)
@@ -146,6 +159,12 @@ export default function DashboardApp({
       fetch('/api/radar').then(r => r.json()).then(d => setRadar(d)).catch(() => {}).finally(() => setRadarLoading(false))
     }
   }, [tab, radar, radarLoading])
+
+  const loadPoolsNet = (net: string) => {
+    if (net === poolNet && radar?.pools) return
+    setPoolNet(net); setPoolsLoading(true)
+    fetch(`/api/radar?net=${net}`).then(r => r.json()).then(d => setRadar((prev: any) => ({ ...(prev || {}), pools: d.pools || [] }))).catch(() => {}).finally(() => setPoolsLoading(false))
+  }
 
   useEffect(() => {
     const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
@@ -340,11 +359,22 @@ export default function DashboardApp({
           <div className="brand"><b>Tiger Invest</b><span>Controle de Ativos</span></div>
           <div className="top-actions">
             <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{alerts.length > 0 && <span className="bell-badge">{alerts.length}</span>}</button>
+            {isAdmin && <button className="logout" style={{ borderColor: 'rgba(255,176,32,.5)', color: '#FFB020' }} onClick={() => router.push('/admin')}>Admin</button>}
             <div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button>
           </div>
         </div>
 
         <div className="scroll">
+          {showRenew && (
+            <div className={`renew-banner ${daysToEnd === 0 ? 'today' : ''}`}>
+              <div className="rb-ic">⏳</div>
+              <div className="rb-txt">
+                <b>{daysToEnd === 0 ? `Seu ${planLabel} vence hoje!` : `Seu ${planLabel} vence em ${daysToEnd} ${daysToEnd === 1 ? 'dia' : 'dias'}`}</b>
+                <span>Renove agora para não perder o acesso aos seus recursos.</span>
+              </div>
+              <button className="rb-btn" onClick={() => router.push('/assinar')}>Renovar</button>
+            </div>
+          )}
           {/* INÍCIO */}
           <section className={`screen ${tab === 'inicio' ? 'active' : ''}`}>
             <div className="hero">
@@ -426,11 +456,12 @@ export default function DashboardApp({
                 <div className={`rangestatus ${inRange ? (nearEdge ? 'rs-warn' : 'rs-in') : 'rs-out'}`}>{inRange ? (nearEdge ? '⚠ PERTO DE SAIR DA FAIXA' : '✓ DENTRO DA FAIXA · gerando taxas') : below ? '▼ FORA — abaixo · sem taxas' : above ? '▲ FORA — acima · sem taxas' : 'faixa não definida'}</div>
                 <div className="poolrange2"><div className="pr-band" /><div className={`pr-cur ${inRange ? '' : 'out'}`} style={{ left: `${pos}%` }} /></div>
                 <div className="poolrangelbl"><span>{fmt(p.low_range)}</span><span className="pr-now">{price > 0 ? fmt(price) : '—'}</span><span>{fmt(p.high_range)}</span></div>
-                {pd && (<div className="pooltraction">
+                {pd && has(3) && (<div className="pooltraction">
                   <div className="pt-cell"><span>TVL</span><b>{abbr(pd.tvl)}</b></div>
                   <div className="pt-cell"><span>Vol 24h</span><b>{abbr(pd.vol24)}</b></div>
                   <div className="pt-cell"><span>Tração</span><b className={trac != null && trac > 0.3 ? 'up' : trac != null && trac > 0.1 ? '' : 'down'}>{trac == null ? '—' : trac > 0.3 ? 'Alta' : trac > 0.1 ? 'Média' : 'Baixa'}</b></div>
                 </div>)}
+                {pd && !has(3) && (<div className="pooltraction" style={{ justifyContent: 'center', cursor: 'pointer' }} onClick={() => setUpgrade({ tier: 3, feature: 'Tração ao vivo' })}><div className="pt-cell" style={{ flex: 'none' }}><span>🔒 Tração ao vivo (TVL, volume)</span><b className="lock-badge">TIGER ALPHA →</b></div></div>)}
                 <div style={{ marginTop: 12 }}>
                   <div className="kv"><span className="k">Aporte</span><span className="v num">{usd(p.aporte)}</span></div>
                   <div className="kv"><span className="k">Saldo atual</span><span className="v num">{usd(p.current_value)}</span></div>
@@ -513,13 +544,22 @@ export default function DashboardApp({
                 <div className="qprice"><div className="p">{usd(c.price)}</div><div className="qchg"><span style={{ color: c.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(c.ch24 || 0)} 24h</span>{c.ch7d != null && <span style={{ color: c.ch7d >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 8 }}>{pct(c.ch7d)} 7d</span>}</div></div>
               </div>
             ))}
-            {!radarLoading && radar && radarSeg === 'pools' && (radar.pools || []).map((p: any, i: number) => (
+            {!radarLoading && radar && radarSeg === 'pools' && (
+              <div className="netbar">
+                {([['all', 'Todas'], ['eth', 'Ethereum'], ['solana', 'Solana'], ['base', 'Base'], ['bsc', 'BSC'], ['arbitrum', 'Arbitrum'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
+                  <button key={k} className={poolNet === k ? 'netchip on' : 'netchip'} onClick={() => loadPoolsNet(k)}>{l}</button>
+                ))}
+              </div>
+            )}
+            {poolsLoading && radarSeg === 'pools' && <p className="foot-note">Buscando pools…</p>}
+            {!radarLoading && !poolsLoading && radar && radarSeg === 'pools' && (radar.pools || []).map((p: any, i: number) => (
               <div className="qrow" key={i}>
                 <div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#7C5CFF)' }}>{(p.network || '').slice(0, 3).toUpperCase()}</div>
                 <div className="qname"><b>{p.name}</b><span>{p.network} · TVL {abbr(p.tvl)}</span></div>
                 <div className="qprice"><div className="p">{abbr(p.vol24)}</div><div className="qchg" style={{ color: p.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(p.ch24 || 0)} 24h</div></div>
               </div>
             ))}
+            {!radarLoading && !poolsLoading && radar && radarSeg === 'pools' && (radar.pools || []).length === 0 && <p className="foot-note">Nenhuma pool com liquidez relevante nessa rede agora — tente outra rede.</p>}
             {!radarLoading && radar && radarSeg !== 'pools' && (!radar[radarSeg] || radar[radarSeg].length === 0) && <p className="foot-note">Sem dados agora — tente novamente em instantes.</p>}
             <p className="foot-note">Dados de mercado (CoinGecko / GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada ativo antes de investir.</p>
           </section>
@@ -536,10 +576,33 @@ export default function DashboardApp({
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
             ['aportes', 'Aportes', <><path key="a" d="M7 17V9m0 0l-3 3m3-3l3 3" /><path key="b" d="M17 7v8m0 0l3-3m-3 3l-3-3" /></>],
             ['metas', 'Metas', <><circle key="a" cx="12" cy="12" r="8" /><circle key="b" cx="12" cy="12" r="3.2" /></>],
-          ] as [Tab, string, React.ReactNode][]).map(([k, label, icon]) => (
-            <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}><svg viewBox="0 0 24 24">{icon}</svg>{label}</button>
-          ))}
+          ] as [Tab, string, React.ReactNode][]).map(([k, label, icon]) => {
+            const min = TAB_MIN[k] || 1
+            const locked = !has(min)
+            return (
+              <button key={k} className={tab === k ? 'on' : ''} onClick={() => locked ? setUpgrade({ tier: min, feature: label }) : setTab(k)} style={locked ? { opacity: .55 } : undefined}>
+                <svg viewBox="0 0 24 24">{icon}</svg>{label}{locked && <span className="nav-lock">🔒</span>}
+              </button>
+            )
+          })}
         </nav>
+
+        {/* UPGRADE (feature bloqueada por plano) */}
+        {upgrade && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setUpgrade(null) }}>
+            <div className="sheet"><div className="grabber" />
+              <div className="lock-card" style={{ border: 'none', background: 'none', padding: '6px 0 0' }}>
+                <div className="lk-ic">🔒</div>
+                <h4>{upgrade.feature} faz parte do {PLAN_NAME[upgrade.tier]}</h4>
+                <p>Faça upgrade do seu plano para desbloquear {upgrade.feature.toLowerCase()} e todos os recursos do {PLAN_NAME[upgrade.tier]}.</p>
+              </div>
+              <div className="grid2" style={{ marginTop: 4 }}>
+                <button className="btn ghost" onClick={() => setUpgrade(null)}>Agora não</button>
+                <button className="btn" onClick={() => router.push('/assinar')}>Fazer upgrade</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* DETALHE DO ATIVO */}
         {detail && (() => {
@@ -554,6 +617,7 @@ export default function DashboardApp({
                 <div className="sheet-scroll">
                   <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<button className="mini-add" style={{ marginLeft: 'auto' }} onClick={() => openAssetEdit(h)}>✎ editar</button><span style={{ marginLeft: 8 }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
 
+                  {has(2) ? (<>
                   {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
                   {h.kind === 'crypto' && (() => {
                     const myLevels = levels.filter(l => l.symbol === h.symbol).sort((a, b) => b.price - a.price)
@@ -573,6 +637,14 @@ export default function DashboardApp({
                       {myLevels.length === 0 && <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>Fixe seus próprios suportes e resistências — eles complementam a análise do algoritmo com a sua leitura.</p>}
                     </div>)
                   })()}
+                  </>) : (
+                    <div className="lock-card" style={{ marginTop: 14 }}>
+                      <div className="lk-ic">🔒</div>
+                      <h4>Análise técnica é TIGER PRO</h4>
+                      <p>Suporte, resistência, gatilhos, BMSB, RSI, veredito e níveis personalizados. Sua posição e histórico continuam disponíveis abaixo.</p>
+                      <button className="btn" onClick={() => { setDetail(null); router.push('/assinar') }}>Fazer upgrade para PRO</button>
+                    </div>
+                  )}
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>

@@ -1,5 +1,6 @@
 export type Plan = { id: string; name: string; price: number; tag: string; popular?: boolean; features: string[] }
 
+// Defaults / fallback. A fonte de verdade em produção é a tabela `plans` (editável no painel admin).
 export const PLANS: Plan[] = [
   {
     id: 'start', name: 'TIGER START', price: 5.99, tag: 'O começo do controle',
@@ -32,3 +33,8 @@ export const PLANS: Plan[] = [
     ],
   },
 ]
+
+// Converte uma linha da tabela `plans` para o tipo Plan.
+export function rowToPlan(r: any): Plan {
+  return { id: r.id, name: r.name, price: (r.price_cents ?? 0) / 100, tag: r.tag ?? '', popular: !!r.popular, features: Array.isArray(r.features) ? r.features : [] }
+}

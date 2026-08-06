@@ -1,8 +1,8 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Background from '@/components/Background'
-import { PLANS } from '@/lib/plans'
+import { PLANS, type Plan } from '@/lib/plans'
 
 const Mark = () => (
   <div className="mark" aria-hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.3L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.7L12 2z" /></svg></div>
@@ -10,6 +10,8 @@ const Mark = () => (
 
 export default function Landing() {
   const [annual, setAnnual] = useState(false)
+  const [plans, setPlans] = useState<Plan[]>(PLANS)
+  useEffect(() => { fetch('/api/plans').then(r => r.json()).then(d => { if (Array.isArray(d) && d.length) setPlans(d) }).catch(() => {}) }, [])
   const priceOf = (p: number) => annual ? `R$ ${(p * 12).toFixed(2).replace('.', ',')}` : `R$ ${p.toFixed(2).replace('.', ',')}`
 
   const features = [
@@ -79,7 +81,7 @@ export default function Landing() {
           </div>
         </div>
         <div className="lp-plans">
-          {PLANS.map(p => (
+          {plans.map(p => (
             <div className={`lp-plan ${p.popular ? 'pop' : ''}`} key={p.id}>
               {p.popular && <span className="lp-pop-tag">MAIS ESCOLHIDO</span>}
               <h3>{p.name}</h3>
