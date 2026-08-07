@@ -509,31 +509,31 @@ export default function DashboardApp({
               {ideasLoading && <p className="foot-note">Buscando pares…</p>}
               {!ideasLoading && ideas && ideas.map((it: any, i: number) => {
                 const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
-                const trColor = it.tracao === 'Alta' ? 'var(--green)' : it.tracao === 'Média' ? '#F5A623' : 'var(--red)'
-                const vLabel = it.verdictTone === 'buy' ? 'CONSERVADOR' : it.verdictTone === 'sell' ? 'ALTO RISCO' : 'MODERADO'
+                const aprColor = it.verdictTone === 'buy' ? 'var(--green)' : it.verdictTone === 'sell' ? 'var(--red)' : '#F5A623'
                 const vIcon = it.verdictTone === 'buy' ? '✓' : it.verdictTone === 'sell' ? '!' : '~'
                 return (
                   <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i}>
-                    {it.highlight && <div className="hot-badge">⭐ DESTAQUE · bom risco/retorno</div>}
+                    {it.highlight && <div className="hot-badge">⭐ DESTAQUE · vale entrar</div>}
                     <div className="poolhead">
                       <div className="poolpair">#{i + 1}</div>
-                      <div className="poolt"><b>{it.name}</b><span>{it.network} · TVL {abbr(it.tvl)}</span></div>
+                      <div className="poolt"><b>{it.name}</b><span>{it.dex} · {it.network} · TVL {abbr(it.tvl)}</span></div>
                       <div className="poolval"><div className="num">{abbr(it.vol24)}</div><div className="num" style={{ color: 'var(--muted)' }}>vol 24h</div></div>
                     </div>
                     <div className="pooltraction">
-                      <div className="pt-cell"><span>Vol / TVL</span><b style={{ color: trColor }}>{it.volTvl.toFixed(2)}×</b></div>
-                      <div className="pt-cell"><span>Tração</span><b style={{ color: trColor }}>{it.tracao}</b></div>
+                      <div className="pt-cell"><span>Taxa est./ano</span><b style={{ color: aprColor }}>{it.feeApr == null ? '—' : it.feeApr >= 1000 ? '999%+' : it.feeApr + '%'}</b></div>
+                      <div className="pt-cell"><span>Vol / TVL</span><b style={{ color: it.tracao === 'Alta' ? 'var(--green)' : it.tracao === 'Média' ? '#F5A623' : 'var(--red)' }}>{it.volTvl.toFixed(2)}×</b></div>
                       <div className="pt-cell"><span>Risco IL</span><b style={{ color: ilColor }}>{it.il}</b></div>
                     </div>
                     <div className={`verdict verdict-${it.verdictTone}`} style={{ marginTop: 12 }}>
                       <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
-                      <div><b>{vLabel}</b><p>{it.verdict}</p></div>
+                      <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
                     </div>
+                    {it.gtUrl && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6', marginTop: 10 }} href={it.gtUrl} target="_blank" rel="noreferrer">Ver pool no {it.dex} ↗</a>}
                   </div>
                 )
               })}
               {!ideasLoading && ideas && ideas.length === 0 && <p className="foot-note">Sem pares de qualidade nessa rede agora — tente outra rede.</p>}
-              <p className="foot-note"><b>Tração</b> = Vol 24h ÷ TVL (o quanto a pool gira em taxas). <b>IL</b> = risco de perda impermanente pelo tipo de par (estável/estável é mínimo; volátil/estável é o maior). Dados ao vivo (GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada pool (contrato, rede, gas) antes de fornecer liquidez.</p>
+              <p className="foot-note"><b>Taxa est./ano</b> = APR aproximado só das taxas (Vol 24h × fee ÷ TVL, anualizado) — reward. <b>IL</b> = risco de perda impermanente pelo tipo de par. O veredito cruza taxa × IL × profundidade de TVL × volatilidade. Sem faixa de fee no nome, não dá pra estimar o APR (fica "Avaliar"). Dados ao vivo (GeckoTerminal) — não é recomendação. Estude cada pool (contrato, rede, gas) antes de fornecer liquidez.</p>
             </>)}
           </section>
 
