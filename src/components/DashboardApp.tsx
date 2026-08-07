@@ -61,8 +61,9 @@ export default function DashboardApp({
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
-  const [ideasNet, setIdeasNet] = useState('eth')
+  const [ideasNet, setIdeasNet] = useState('all')
   const [ideasLoading, setIdeasLoading] = useState(false)
+  const [calc, setCalc] = useState<any | null>(null)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
@@ -179,6 +180,12 @@ export default function DashboardApp({
     if (tab === 'pools' && ideas === null && !ideasLoading && has(2)) loadIdeas(ideasNet)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
+
+  // abre a calculadora de IL, pré-preenchendo com a pool escolhida (se veio de um card)
+  const openCalc = (it?: any) => setCalc({
+    pair: it?.name || '', apr: it?.feeApr != null ? String(it.feeApr) : '', ilLabel: it?.il || '',
+    capital: '1000', chg: '30', days: '30', v3: false, width: '20',
+  })
 
   useEffect(() => {
     const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
@@ -500,9 +507,9 @@ export default function DashboardApp({
                 <button className="btn" style={{ maxWidth: 240, margin: '0 auto' }} onClick={() => setUpgrade({ tier: 2, feature: 'Onde abrir pool' })}>Liberar no TIGER PRO →</button>
               </div>
             ) : (<>
-              <div className="niche-h">Ordenado por <b>tração (Vol/TVL)</b> e <b>risco de IL</b> — quanto mais taxa a pool gira e menor o IL, melhor o par pra fornecer liquidez.</div>
+              <div className="niche-h">Ranking do <b>melhor risco/retorno</b> — cruza taxa estimada × IL × TVL × volatilidade. Em <b>🏆 Todas</b>, mostra o melhor par de cada tipo na melhor rede dele.</div>
               <div className="netbar">
-                {([['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
+                {([['all', '🏆 Todas'], ['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
                   <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
                 ))}
               </div>
@@ -515,7 +522,7 @@ export default function DashboardApp({
                   <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i}>
                     {it.highlight && <div className="hot-badge">⭐ DESTAQUE · vale entrar</div>}
                     <div className="poolhead">
-                      <div className="poolpair">#{i + 1}</div>
+                      <div className="poolpair" style={i < 3 ? { fontSize: 20 } : undefined}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</div>
                       <div className="poolt"><b>{it.name}</b><span>{it.dex} · {it.network} · TVL {abbr(it.tvl)}</span></div>
                       <div className="poolval"><div className="num">{abbr(it.vol24)}</div><div className="num" style={{ color: 'var(--muted)' }}>vol 24h</div></div>
                     </div>
@@ -528,11 +535,17 @@ export default function DashboardApp({
                       <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
                       <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
                     </div>
-                    {it.gtUrl && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6', marginTop: 10 }} href={it.gtUrl} target="_blank" rel="noreferrer">Ver pool no {it.dex} ↗</a>}
+                    <div className="grid2" style={{ marginTop: 10 }}>
+                      {it.gtUrl && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={it.gtUrl} target="_blank" rel="noreferrer">Ver pool ↗</a>}
+                      <button className="btn ghost" onClick={() => has(3) ? openCalc(it) : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular {!has(3) && '🔒'}</button>
+                    </div>
                   </div>
                 )
               })}
               {!ideasLoading && ideas && ideas.length === 0 && <p className="foot-note">Sem pares de qualidade nessa rede agora — tente outra rede.</p>}
+              {!ideasLoading && ideas && ideas.length > 0 && (
+                <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno da minha entrada {!has(3) && '🔒'}</button>
+              )}
               <p className="foot-note"><b>Taxa est./ano</b> = APR aproximado só das taxas (Vol 24h × fee ÷ TVL, anualizado) — reward. <b>IL</b> = risco de perda impermanente pelo tipo de par. O veredito cruza taxa × IL × profundidade de TVL × volatilidade. Sem faixa de fee no nome, não dá pra estimar o APR (fica "Avaliar"). Dados ao vivo (GeckoTerminal) — não é recomendação. Estude cada pool (contrato, rede, gas) antes de fornecer liquidez.</p>
             </>)}
           </section>
@@ -768,6 +781,57 @@ export default function DashboardApp({
             </div></div>
           </div>
         )}
+
+        {/* CALCULADORA DE IL / RETORNO (plano completo) */}
+        {calc && (() => {
+          const cap = num(calc.capital), chg = num(calc.chg), days = num(calc.days), apr = num(calc.apr), w = num(calc.width)
+          const k = 1 + chg / 100
+          const outOfRange = calc.v3 && w > 0 && Math.abs(chg) >= w
+          let E = 1
+          if (calc.v3 && w > 0) { const pa = 1 - w / 100, pb = 1 + w / 100; const e = pa > 0 ? 1 / (1 - Math.pow(pa / pb, 0.25)) : 1; E = isFinite(e) && e > 1 ? e : 1 }
+          const kUsed = outOfRange ? (chg > 0 ? 1 + w / 100 : Math.max(0.0001, 1 - w / 100)) : Math.max(0.0001, k)
+          const ilBasePct = (2 * Math.sqrt(kUsed) / (1 + kUsed) - 1) * 100
+          const ilPctEff = calc.v3 ? ilBasePct * E : ilBasePct
+          const effApr = calc.v3 ? apr * E : apr
+          const fees = cap * (effApr / 100) * (days / 365)
+          const ilLoss = cap * Math.abs(ilPctEff / 100)
+          const net = fees - ilLoss
+          return (
+            <div className="modal" onClick={e => { if (e.target === e.currentTarget) setCalc(null) }}>
+              <div className="sheet sheet-scroll"><div className="grabber" />
+                <h3>🧮 Calculadora de IL{calc.pair ? <span className="sighint"> · {calc.pair}</span> : null}</h3>
+                <div className="grid2">
+                  <div className="field"><label>Capital U$</label><input inputMode="decimal" value={calc.capital} onChange={e => setCalc({ ...calc, capital: e.target.value })} /></div>
+                  <div className="field"><label>Período (dias)</label><input inputMode="decimal" value={calc.days} onChange={e => setCalc({ ...calc, days: e.target.value })} /></div>
+                </div>
+                <div className="grid2">
+                  <div className="field"><label>Variação do volátil (%)</label><input inputMode="decimal" value={calc.chg} onChange={e => setCalc({ ...calc, chg: e.target.value })} placeholder="30 = subiu 30%" /></div>
+                  <div className="field"><label>APR de taxas (%)</label><input inputMode="decimal" value={calc.apr} onChange={e => setCalc({ ...calc, apr: e.target.value })} /></div>
+                </div>
+                <div className="pw-toggle" style={{ marginTop: 12 }}>
+                  <button className={!calc.v3 ? 'on' : ''} onClick={() => setCalc({ ...calc, v3: false })}>Full-range (v2)</button>
+                  <button className={calc.v3 ? 'on' : ''} onClick={() => setCalc({ ...calc, v3: true })}>Concentrada (v3)</button>
+                </div>
+                {calc.v3 && <div className="field" style={{ marginTop: 10 }}><label>Largura da faixa ± (%)</label><input inputMode="decimal" value={calc.width} onChange={e => setCalc({ ...calc, width: e.target.value })} placeholder="20 = ±20%" /></div>}
+
+                <div className="card" style={{ marginTop: 16 }}>
+                  <div className="big-kv"><span className="k">Perda impermanente (IL)</span><span className="v" style={{ color: 'var(--red)' }}>{ilPctEff.toFixed(2)}% · -{usd(ilLoss).slice(1)}</span></div>
+                  <div className="big-kv"><span className="k">Taxas no período{calc.v3 ? ` (APR ~${Math.round(effApr)}%)` : ''}</span><span className="v" style={{ color: 'var(--green)' }}>+{usd(fees).slice(1)}</span></div>
+                  <div className="big-kv"><span className="k">Líquido vs. segurar</span><span className="v" style={{ color: net >= 0 ? 'var(--green)' : 'var(--red)' }}>{net >= 0 ? '+' : '-'}{usd(Math.abs(net)).slice(1)}</span></div>
+                  {calc.v3 && <div className="big-kv"><span className="k">Eficiência de capital (v3)</span><span className="v">{E.toFixed(1)}×</span></div>}
+                </div>
+
+                <div className={`verdict verdict-${net >= 0 ? 'buy' : 'sell'}`} style={{ marginTop: 12 }}>
+                  <div className={`vic vic-${net >= 0 ? 'buy' : 'sell'}`}>{net >= 0 ? '✓' : '!'}</div>
+                  <div><b>{net >= 0 ? 'TAXA COBRE O IL' : 'IL MAIOR QUE A TAXA'}</b><p>{net >= 0 ? `Neste cenário as taxas (${usd(fees)}) superam o IL — sobra líquida de ${usd(net)} vs. só segurar os ativos.` : `Neste cenário o IL (-${usd(ilLoss).slice(1)}) supera as taxas — você perde ${usd(Math.abs(net))} vs. só segurar.`}</p></div>
+                </div>
+                {outOfRange && <p className="foot-note" style={{ color: '#F5A623' }}>⚠ Com faixa de ±{calc.width}% e variação de {calc.chg}%, o preço <b>saiu do range</b>: a posição vira 100% do ativo mais fraco e para de gerar taxa. IL travado no limite da faixa.</p>}
+                <p className="foot-note">Modelo 50/50 padrão. O modo v3 é aproximado: dentro da faixa, taxa e IL são ampliados pela eficiência de capital. Não considera gas nem emissões de reward. Estimativa educacional — não é recomendação.</p>
+                <button className="btn ghost" style={{ marginTop: 12 }} onClick={() => setCalc(null)}>Fechar</button>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* FLUXO: novo/editar movimento */}
         {flowForm && (
