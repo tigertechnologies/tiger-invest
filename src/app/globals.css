@@ -209,7 +209,7 @@ select{font-family:'Inter';}
 .sheet-scroll{max-height:76vh;overflow-y:auto;}
 .sheet-scroll::-webkit-scrollbar{width:0;}
 .nav button{font-size:9.5px;}
-.netbar{display:flex;gap:7px;overflow-x:auto;padding:2px 0 10px;margin-bottom:2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.netbar{display:flex;flex-wrap:wrap;gap:7px;padding:2px 0 10px;margin-bottom:2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
 .netbar::-webkit-scrollbar{display:none;}
 .netchip{flex:0 0 auto;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--muted);font-family:'Sora';font-weight:600;font-size:11.5px;padding:7px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;transition:all .15s;}
 .netchip.on{background:linear-gradient(145deg,#2BFFC6,#7C5CFF);border-color:transparent;color:#04121a;box-shadow:0 0 16px rgba(43,255,198,.35);}

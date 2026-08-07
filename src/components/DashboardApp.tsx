@@ -63,6 +63,9 @@ export default function DashboardApp({
   const [ideas, setIdeas] = useState<any[] | null>(null)
   const [ideasNet, setIdeasNet] = useState('all')
   const [ideasLoading, setIdeasLoading] = useState(false)
+  const [passiveOnly, setPassiveOnly] = useState(false)
+  const [watchOnly, setWatchOnly] = useState(false)
+  const [watch, setWatch] = useState<string[]>([])
   const [calc, setCalc] = useState<any | null>(null)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
@@ -185,6 +188,15 @@ export default function DashboardApp({
   const openCalc = (it?: any) => setCalc({
     pair: it?.name || '', apr: it?.feeApr != null ? String(it.feeApr) : '', ilLabel: it?.il || '',
     capital: '1000', chg: '30', days: '30', v3: false, width: '20',
+  })
+
+  // Watchlist de pools (local do aparelho — sem servidor). Vigia pares e filtra por eles.
+  useEffect(() => { try { const w = JSON.parse(localStorage.getItem('tiger_pool_watch') || '[]'); if (Array.isArray(w)) setWatch(w) } catch { } }, [])
+  const keyOf = (it: any) => `${it.name}|${it.network}`
+  const toggleStar = (it: any) => setWatch(prev => {
+    const k = keyOf(it); const nx = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]
+    try { localStorage.setItem('tiger_pool_watch', JSON.stringify(nx)) } catch { }
+    return nx
   })
 
   useEffect(() => {
@@ -506,48 +518,67 @@ export default function DashboardApp({
                 <p>Ranking ao vivo dos pares com melhor tração (Vol/TVL) e menor risco de perda impermanente, por rede.</p>
                 <button className="btn" style={{ maxWidth: 240, margin: '0 auto' }} onClick={() => setUpgrade({ tier: 2, feature: 'Onde abrir pool' })}>Liberar no TIGER PRO →</button>
               </div>
-            ) : (<>
-              <div className="niche-h">Ranking do <b>melhor risco/retorno</b> — cruza taxa estimada × IL × TVL × volatilidade. Em <b>🏆 Todas</b>, mostra o melhor par de cada tipo na melhor rede dele.</div>
+            ) : (() => {
+              const shown = (ideas || []).filter((it: any) => (!passiveOnly || !it.concentrated) && (!watchOnly || watch.includes(keyOf(it))))
+              return (<>
+              <div className="niche-h">Ranking por <b>APR líquido</b> (taxa − IL) — o que sobra depois que a perda impermanente come parte da taxa. Em <b>🏆 Todas</b>, o melhor par de cada tipo na melhor rede.</div>
               <div className="netbar">
                 {([['all', '🏆 Todas'], ['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
                   <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
                 ))}
               </div>
+              <div className="pw-toggle" style={{ marginTop: 2 }}>
+                <button className={!passiveOnly ? 'on' : ''} onClick={() => setPassiveOnly(false)}>Todas as pools</button>
+                <button className={passiveOnly ? 'on' : ''} onClick={() => setPassiveOnly(true)}>🛡 Só passivas</button>
+              </div>
+              <button className={watchOnly ? 'netchip on' : 'netchip'} style={{ marginTop: 8 }} onClick={() => setWatchOnly(v => !v)}>⭐ Vigiando{watch.length ? ` (${watch.length})` : ''}</button>
               {ideasLoading && <p className="foot-note">Buscando pares…</p>}
-              {!ideasLoading && ideas && ideas.map((it: any, i: number) => {
+              {!ideasLoading && ideas && shown.map((it: any, i: number) => {
                 const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
-                const aprColor = it.verdictTone === 'buy' ? 'var(--green)' : it.verdictTone === 'sell' ? 'var(--red)' : '#F5A623'
                 const vIcon = it.verdictTone === 'buy' ? '✓' : it.verdictTone === 'sell' ? '!' : '~'
+                const net = it.netApr
+                const netStr = net == null ? (it.feeApr != null ? it.feeApr + '%' : '—') : (net >= 0 ? '+' : '') + net + '%'
+                const netColor = net == null ? '#F5A623' : net >= 12 ? 'var(--green)' : net > 0 ? '#F5A623' : 'var(--red)'
+                const starred = watch.includes(keyOf(it))
+                const dataLink = it.dataUrl || it.gtUrl
                 return (
                   <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i}>
                     {it.highlight && <div className="hot-badge">⭐ DESTAQUE · vale entrar</div>}
                     <div className="poolhead">
                       <div className="poolpair" style={i < 3 ? { fontSize: 20 } : undefined}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</div>
                       <div className="poolt"><b>{it.name}</b><span>{it.dex} · {it.network} · TVL {abbr(it.tvl)}</span></div>
-                      <div className="poolval"><div className="num">{abbr(it.vol24)}</div><div className="num" style={{ color: 'var(--muted)' }}>vol 24h</div></div>
+                      <button onClick={() => toggleStar(it)} title="Vigiar" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: '0 2px', color: starred ? '#F5C850' : 'var(--faint)' }}>{starred ? '★' : '☆'}</button>
                     </div>
-                    <div className="pooltraction">
-                      <div className="pt-cell"><span>Taxa est./ano</span><b style={{ color: aprColor }}>{it.feeApr == null ? '—' : it.feeApr >= 1000 ? '999%+' : it.feeApr + '%'}</b></div>
-                      <div className="pt-cell"><span>Vol / TVL</span><b style={{ color: it.tracao === 'Alta' ? 'var(--green)' : it.tracao === 'Média' ? '#F5A623' : 'var(--red)' }}>{it.volTvl.toFixed(2)}×</b></div>
+                    <div style={{ marginTop: 8 }}>
+                      {it.concentrated
+                        ? <span className="lvltag res" style={{ display: 'inline-block' }}>⚙ Concentrada · exige gestão de faixa</span>
+                        : <span className="lvltag sup" style={{ display: 'inline-block' }}>🛡 Passiva · deixa rodar</span>}
+                    </div>
+                    <div className="pooltraction" style={{ marginTop: 10 }}>
+                      <div className="pt-cell"><span>APR líquido</span><b style={{ color: netColor }}>{netStr}</b></div>
                       <div className="pt-cell"><span>Risco IL</span><b style={{ color: ilColor }}>{it.il}</b></div>
+                      <div className="pt-cell"><span>Sustentável</span><b style={{ color: it.sustainable === false ? '#F5A623' : it.sustainable === true ? 'var(--green)' : 'var(--muted)' }}>{it.sustainable === false ? 'Pico ⚠' : it.sustainable === true ? 'Sim' : '—'}</b></div>
                     </div>
+                    <div className="niche-h" style={{ margin: '10px 2px 0' }}>Taxa base <b>{it.feeApr}%</b>{it.rewardApr > 0 ? <> · Emissões <b style={{ color: '#F5A623' }}>+{it.rewardApr}%</b></> : null} · vol 24h <b>{abbr(it.vol24)}</b>{it.maxEntry ? <> · aporte ≤ <b>{abbr(it.maxEntry)}</b></> : null}</div>
                     <div className={`verdict verdict-${it.verdictTone}`} style={{ marginTop: 12 }}>
                       <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
                       <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
                     </div>
                     <div className="grid2" style={{ marginTop: 10 }}>
-                      {it.gtUrl && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={it.gtUrl} target="_blank" rel="noreferrer">Ver pool ↗</a>}
+                      <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href={it.dexUrl || dataLink} target="_blank" rel="noreferrer">Abrir na {it.dex} ↗</a>
                       <button className="btn ghost" onClick={() => has(3) ? openCalc(it) : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular {!has(3) && '🔒'}</button>
                     </div>
+                    {dataLink && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6', marginTop: 8, fontSize: 12, opacity: .82 }} href={dataLink} target="_blank" rel="noreferrer">Ver dados e histórico ↗</a>}
                   </div>
                 )
               })}
-              {!ideasLoading && ideas && ideas.length === 0 && <p className="foot-note">Sem pares de qualidade nessa rede agora — tente outra rede.</p>}
-              {!ideasLoading && ideas && ideas.length > 0 && (
+              {!ideasLoading && ideas && shown.length === 0 && <p className="foot-note">{watchOnly ? 'Você ainda não está vigiando pools nessa visão — toque na ⭐ de um card.' : passiveOnly ? 'Nenhuma pool passiva de qualidade nessa rede agora — tente outra rede ou desmarque "Só passivas".' : 'Sem pares de qualidade nessa rede agora — tente outra rede.'}</p>}
+              {!ideasLoading && ideas && shown.length > 0 && (
                 <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno da minha entrada {!has(3) && '🔒'}</button>
               )}
-              <p className="foot-note"><b>Taxa est./ano</b> = APR aproximado só das taxas (Vol 24h × fee ÷ TVL, anualizado) — reward. <b>IL</b> = risco de perda impermanente pelo tipo de par. O veredito cruza taxa × IL × profundidade de TVL × volatilidade. Sem faixa de fee no nome, não dá pra estimar o APR (fica "Avaliar"). Dados ao vivo (GeckoTerminal) — não é recomendação. Estude cada pool (contrato, rede, gas) antes de fornecer liquidez.</p>
-            </>)}
+              <p className="foot-note"><b>APR líquido</b> = taxa de swap − IL estimado (o que realmente sobra). <b>Taxa base</b> vem de swaps (sustentável); <b>Emissões</b> são reward de token (somem se o incentivo acaba). <b>Sustentável</b> compara o APR de agora com a média de 7 dias — "Pico" alerta APR inflado. IL medido em 7d quando disponível. Fonte: DefiLlama (com GeckoTerminal de reserva) — não é recomendação. Estude cada pool antes de fornecer liquidez.</p>
+            </>)
+            })()}
           </section>
 
           {/* APORTES */}
