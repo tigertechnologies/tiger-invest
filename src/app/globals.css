@@ -215,8 +215,11 @@ select{font-family:'Inter';}
 .netchip.on{background:linear-gradient(145deg,#2BFFC6,#7C5CFF);border-color:transparent;color:#04121a;box-shadow:0 0 16px rgba(43,255,198,.35);}
 
 /* ---- Desktop: emoldura o app como painel (evita coluna solta no meio) ---- */
+/* IMPORTANTE: o enquadramento flex vale SÓ para o dashboard (que tem .app).
+   Escopando com :has(.app) evitamos vazar display:flex para a landing,
+   o admin, login e termos — que fazem o próprio layout e quebravam antes. */
 @media (min-width:900px){
-  body{display:flex;align-items:center;justify-content:center;padding:26px 0;}
+  body:has(.app){display:flex;align-items:center;justify-content:center;padding:26px 0;}
   .app{
     max-width:540px;
     height:calc(100vh - 52px);
@@ -342,6 +345,16 @@ select{font-family:'Inter';}
 .pr-cur.out{background:var(--red);box-shadow:0 0 8px var(--red);}
 .poolrangelbl{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:'JetBrains Mono';}
 .pr-now{color:var(--text);font-weight:600;}
+
+/* ---- destaque de pool boa (tração alta + IL controlado = bom risco/retorno) ---- */
+.poolcard.hot{border-color:rgba(43,255,154,.5);
+  background:linear-gradient(160deg,rgba(43,255,154,.07),var(--glass));
+  box-shadow:0 0 0 1px rgba(43,255,154,.32),0 0 30px rgba(43,255,154,.16),inset 0 1px 0 rgba(255,255,255,.05);
+  animation:hotGlow 2.4s ease-in-out infinite;}
+@keyframes hotGlow{0%,100%{box-shadow:0 0 0 1px rgba(43,255,154,.28),0 0 24px rgba(43,255,154,.14);}50%{box-shadow:0 0 0 1px rgba(43,255,154,.45),0 0 40px rgba(43,255,154,.28);}}
+.hot-badge{display:inline-flex;align-items:center;gap:6px;font-family:'Sora';font-weight:800;font-size:10.5px;
+  letter-spacing:.4px;color:#04120b;background:linear-gradient(145deg,#2BFF9A,#2BFFC6);
+  padding:4px 11px;border-radius:999px;box-shadow:0 0 16px rgba(43,255,154,.5);margin-bottom:11px;}
 .pooltraction{display:flex;gap:8px;margin-top:12px;}
 .pt-cell{flex:1;text-align:center;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;padding:9px 4px;}
 .pt-cell span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}

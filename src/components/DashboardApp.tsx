@@ -59,6 +59,10 @@ export default function DashboardApp({
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
   const [poolData, setPoolData] = useState<Record<string, any>>({})
+  // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
+  const [ideas, setIdeas] = useState<any[] | null>(null)
+  const [ideasNet, setIdeasNet] = useState('eth')
+  const [ideasLoading, setIdeasLoading] = useState(false)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
@@ -165,6 +169,16 @@ export default function DashboardApp({
     setPoolNet(net); setPoolsLoading(true)
     fetch(`/api/radar?net=${net}`).then(r => r.json()).then(d => setRadar((prev: any) => ({ ...(prev || {}), pools: d.pools || [] }))).catch(() => {}).finally(() => setPoolsLoading(false))
   }
+
+  const loadIdeas = (net: string) => {
+    setIdeasNet(net); setIdeasLoading(true)
+    fetch(`/api/poolideas?net=${net}`).then(r => r.json()).then(d => setIdeas(d.ideas || [])).catch(() => setIdeas([])).finally(() => setIdeasLoading(false))
+  }
+  // carrega "onde abrir pool" ao abrir a aba Pools (só quem tem o recurso liberado)
+  useEffect(() => {
+    if (tab === 'pools' && ideas === null && !ideasLoading && has(2)) loadIdeas(ideasNet)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   useEffect(() => {
     const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
@@ -474,6 +488,53 @@ export default function DashboardApp({
               </div>)
             })}
             <button className="addbtn" onClick={() => openPool(null)}>+ nova pool</button>
+
+            {/* ---- ONDE ABRIR POOL · melhores pares por Vol/TVL e risco de IL ---- */}
+            <div className="section-gap" />
+            <div className="eyebrow">💧 Onde abrir pool · melhores pares agora</div>
+            {!has(2) ? (
+              <div className="lock-card">
+                <div className="lk-ic">💧</div>
+                <h4>Descubra os melhores pares</h4>
+                <p>Ranking ao vivo dos pares com melhor tração (Vol/TVL) e menor risco de perda impermanente, por rede.</p>
+                <button className="btn" style={{ maxWidth: 240, margin: '0 auto' }} onClick={() => setUpgrade({ tier: 2, feature: 'Onde abrir pool' })}>Liberar no TIGER PRO →</button>
+              </div>
+            ) : (<>
+              <div className="niche-h">Ordenado por <b>tração (Vol/TVL)</b> e <b>risco de IL</b> — quanto mais taxa a pool gira e menor o IL, melhor o par pra fornecer liquidez.</div>
+              <div className="netbar">
+                {([['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
+                  <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
+                ))}
+              </div>
+              {ideasLoading && <p className="foot-note">Buscando pares…</p>}
+              {!ideasLoading && ideas && ideas.map((it: any, i: number) => {
+                const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
+                const trColor = it.tracao === 'Alta' ? 'var(--green)' : it.tracao === 'Média' ? '#F5A623' : 'var(--red)'
+                const vLabel = it.verdictTone === 'buy' ? 'CONSERVADOR' : it.verdictTone === 'sell' ? 'ALTO RISCO' : 'MODERADO'
+                const vIcon = it.verdictTone === 'buy' ? '✓' : it.verdictTone === 'sell' ? '!' : '~'
+                return (
+                  <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i}>
+                    {it.highlight && <div className="hot-badge">⭐ DESTAQUE · bom risco/retorno</div>}
+                    <div className="poolhead">
+                      <div className="poolpair">#{i + 1}</div>
+                      <div className="poolt"><b>{it.name}</b><span>{it.network} · TVL {abbr(it.tvl)}</span></div>
+                      <div className="poolval"><div className="num">{abbr(it.vol24)}</div><div className="num" style={{ color: 'var(--muted)' }}>vol 24h</div></div>
+                    </div>
+                    <div className="pooltraction">
+                      <div className="pt-cell"><span>Vol / TVL</span><b style={{ color: trColor }}>{it.volTvl.toFixed(2)}×</b></div>
+                      <div className="pt-cell"><span>Tração</span><b style={{ color: trColor }}>{it.tracao}</b></div>
+                      <div className="pt-cell"><span>Risco IL</span><b style={{ color: ilColor }}>{it.il}</b></div>
+                    </div>
+                    <div className={`verdict verdict-${it.verdictTone}`} style={{ marginTop: 12 }}>
+                      <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
+                      <div><b>{vLabel}</b><p>{it.verdict}</p></div>
+                    </div>
+                  </div>
+                )
+              })}
+              {!ideasLoading && ideas && ideas.length === 0 && <p className="foot-note">Sem pares de qualidade nessa rede agora — tente outra rede.</p>}
+              <p className="foot-note"><b>Tração</b> = Vol 24h ÷ TVL (o quanto a pool gira em taxas). <b>IL</b> = risco de perda impermanente pelo tipo de par (estável/estável é mínimo; volátil/estável é o maior). Dados ao vivo (GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada pool (contrato, rede, gas) antes de fornecer liquidez.</p>
+            </>)}
           </section>
 
           {/* APORTES */}
