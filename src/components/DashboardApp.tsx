@@ -13,6 +13,25 @@ const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
 
+// XIRR — retorno anualizado ponderado pelo dinheiro e pelas datas reais dos aportes/retiradas.
+// cfs: aporte = valor NEGATIVO (saiu do bolso), retirada/valor atual = POSITIVO. Resolve por bisseção.
+function xirr(cfs: { date: string; amount: number }[]): number | null {
+  const cf = cfs.filter(c => c.amount !== 0).slice().sort((a, b) => a.date.localeCompare(b.date))
+  if (cf.length < 2 || !cf.some(c => c.amount > 0) || !cf.some(c => c.amount < 0)) return null
+  const t0 = new Date(cf[0].date + 'T00:00:00').getTime()
+  const yrs = (d: string) => (new Date(d + 'T00:00:00').getTime() - t0) / (365.25 * 86400000)
+  const npv = (r: number) => cf.reduce((s, c) => s + c.amount / Math.pow(1 + r, yrs(c.date)), 0)
+  let lo = -0.9999, hi = 10, flo = npv(lo), fhi = npv(hi)
+  if (flo * fhi > 0) { hi = 100; fhi = npv(hi); if (flo * fhi > 0) return null }
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2, fm = npv(mid)
+    if (!isFinite(fm)) return null
+    if (Math.abs(fm) < 1e-7) return mid
+    if (flo * fm < 0) hi = mid; else { lo = mid; flo = fm }
+  }
+  return (lo + hi) / 2
+}
+
 export default function DashboardApp({
   userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels,
 }: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[] }) {
@@ -66,6 +85,7 @@ export default function DashboardApp({
   const [passiveOnly, setPassiveOnly] = useState(false)
   const [watchOnly, setWatchOnly] = useState(false)
   const [watch, setWatch] = useState<string[]>([])
+  const [expandedIdea, setExpandedIdea] = useState<string | null>(null)
   const [calc, setCalc] = useState<any | null>(null)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
@@ -390,11 +410,22 @@ export default function DashboardApp({
   pools.forEach(pp => { wAge += daysSince(pp.entry_date) * pp.aporte; wSum += pp.aporte })
   const avgDays = wSum ? wAge / wSum : 0, avgMonths = avgDays / 30.44, avgYears = avgDays / 365.25
   const plPeriodoPct = resultPct
-  // Anualizado por JUROS COMPOSTOS (CAGR), não extrapolação linear — e só quando as posições têm
-  // tempo suficiente. Anualizar um retorno de 2 dias gera número sem sentido (ex.: -150% ao mês).
-  const growth = t.totalInv > 0 ? t.patr / t.totalInv : 1
-  const canAnnualize = avgDays >= 30 && growth > 0
-  const plAnualPct = canAnnualize ? Math.max(-99.9, Math.min((Math.pow(growth, 365.25 / avgDays) - 1) * 100, 9999)) : null
+  // ---- FLUXO DE CAIXA (metodologia da planilha): resultado sobre o LÍQUIDO APORTADO + XIRR ----
+  const liquidoAportado = totIn - totOut                               // aportes − retiradas (R$)
+  const resultadoFluxo = patrBrlF - liquidoAportado                    // saldo atual − líquido aportado
+  const resultadoFluxoPct = liquidoAportado > 0 ? resultadoFluxo / liquidoAportado * 100 : 0
+  const today = new Date().toISOString().slice(0, 10)
+  const cfList = [
+    ...inFlows.map(f => ({ date: fdate(f), amount: -f.amount })),      // aporte = saiu do bolso
+    ...outFlows.map(f => ({ date: fdate(f), amount: f.amount })),      // retirada = voltou
+    { date: today, amount: patrBrlF },                                // valor atual = como se liquidasse hoje
+  ]
+  const xirrAnnual = flows.length && patrBrlF > 0 ? xirr(cfList) : null
+  const xirrPct = xirrAnnual != null ? xirrAnnual * 100 : null
+  const xirrMensalPct = xirrAnnual != null ? (Math.pow(1 + xirrAnnual, 1 / 12) - 1) * 100 : null
+  // período médio real dos aportes (ponderado pelo valor) — o "período correto"
+  const wAporteDays = inFlows.reduce((s, f) => s + f.amount * daysSince(fdate(f)), 0)
+  const avgAporteYears = totIn ? (wAporteDays / totIn) / 365.25 : 0
   // Resultado REAL por janela, a partir do histórico de patrimônio (P&L = patr − custo, neutro a aportes)
   const nowPnlUsd = t.patr - t.totalInv
   const pnlDelta = (days: number) => {
@@ -584,68 +615,87 @@ export default function DashboardApp({
             ) : (() => {
               const shown = (ideas || []).filter((it: any) => (!passiveOnly || !it.concentrated) && (!watchOnly || watch.includes(keyOf(it))))
               return (<>
-              <div className="niche-h">Ranking pela <b>Nota de Yield</b> (0–100), yield ajustado ao risco: retorno líquido + sustentabilidade + IL + liquidez. Em <b>🏆 Todas</b>, o melhor par de cada tipo na melhor rede.</div>
+              <div className="niche-h">Ranking pela <b>Nota de Yield</b> — retorno ajustado ao risco. Toque num card para os detalhes.</div>
               <div className="netbar">
                 {([['all', '🏆 Todas'], ['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
                   <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
                 ))}
               </div>
               <div className="pw-toggle" style={{ marginTop: 2 }}>
-                <button className={!passiveOnly ? 'on' : ''} onClick={() => setPassiveOnly(false)}>Todas as pools</button>
-                <button className={passiveOnly ? 'on' : ''} onClick={() => setPassiveOnly(true)}>🛡 Só passivas</button>
+                <button className={!passiveOnly && !watchOnly ? 'on' : ''} onClick={() => { setPassiveOnly(false); setWatchOnly(false) }}>Todas</button>
+                <button className={passiveOnly ? 'on' : ''} onClick={() => { setPassiveOnly(true); setWatchOnly(false) }}>🛡 Passivas</button>
+                <button className={watchOnly ? 'on' : ''} onClick={() => { setWatchOnly(true); setPassiveOnly(false) }}>⭐ Vigiando{watch.length ? ` ${watch.length}` : ''}</button>
               </div>
-              <button className={watchOnly ? 'netchip on' : 'netchip'} style={{ marginTop: 8 }} onClick={() => setWatchOnly(v => !v)}>⭐ Vigiando{watch.length ? ` (${watch.length})` : ''}</button>
               {ideasLoading && <p className="foot-note">Buscando pares…</p>}
               {!ideasLoading && ideas && shown.map((it: any, i: number) => {
-                const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
-                const vIcon = it.verdictTone === 'buy' ? '✓' : it.verdictTone === 'sell' ? '!' : '~'
                 const net = it.netApr
                 const netStr = net == null ? (it.feeApr != null ? it.feeApr + '%' : '—') : (net >= 0 ? '+' : '') + net + '%'
-                const netColor = net == null ? '#F5A623' : net >= 12 ? 'var(--green)' : net > 0 ? '#F5A623' : 'var(--red)'
+                const netColor = net == null ? 'var(--text)' : net >= 12 ? 'var(--green)' : net > 0 ? '#F5A623' : 'var(--red)'
+                const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
+                const gc = it.yieldGrade === 'A' ? 'var(--green)' : it.yieldGrade === 'B' ? '#7CE0A0' : it.yieldGrade === 'C' ? '#F5A623' : 'var(--red)'
+                const stColor = it.verdictTone === 'buy' ? 'var(--green)' : it.verdictTone === 'sell' ? 'var(--red)' : '#F5A623'
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)
                 const starred = watch.includes(keyOf(it))
                 const dataLink = it.dataUrl || it.gtUrl
+                const open = expandedIdea === keyOf(it)
+                const stop = (e: any) => e.stopPropagation()
                 return (
-                  <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i}>
-                    {it.highlight && <div className="hot-badge">⭐ DESTAQUE · vale entrar</div>}
-                    <div className="poolhead">
-                      <div className="poolpair" style={i < 3 ? { fontSize: 20 } : undefined}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</div>
-                      <div className="poolt"><b>{it.name}</b><span>{it.dex} · {it.network} · TVL {abbr(it.tvl)}</span></div>
-                      <button onClick={() => toggleStar(it)} title="Vigiar" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: '0 2px', color: starred ? '#F5C850' : 'var(--faint)' }}>{starred ? '★' : '☆'}</button>
+                  <div className={`poolcard ${it.highlight ? 'hot' : ''}`} key={i} style={{ cursor: 'pointer' }} onClick={() => setExpandedIdea(open ? null : keyOf(it))}>
+                    {/* linha 1 — par + APR líquido (herói) */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ fontSize: i < 3 ? 17 : 12, fontWeight: 700, minWidth: 24, textAlign: 'center', color: 'var(--muted)', flex: 'none' }}>{medal}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: "'Sora'", fontWeight: 700, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: "'JetBrains Mono'" }}>{it.dex} · {it.network}</div>
+                      </div>
+                      <div style={{ textAlign: 'right', flex: 'none' }}>
+                        <div style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 19, color: netColor, lineHeight: 1 }}>{netStr}</div>
+                        <div style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: .4 }}>APR líq.</div>
+                      </div>
+                      <button onClick={(e) => { stop(e); toggleStar(it) }} title="Vigiar" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px', color: starred ? '#F5C850' : 'var(--faint)', flex: 'none' }}>{starred ? '★' : '☆'}</button>
                     </div>
-                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      {it.yieldGrade && (() => {
-                        const gc = it.yieldGrade === 'A' ? 'var(--green)' : it.yieldGrade === 'B' ? '#7CE0A0' : it.yieldGrade === 'C' ? '#F5A623' : 'var(--red)'
-                        return <span style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 11, color: '#04120b', background: gc, padding: '3px 10px', borderRadius: 999 }}>YIELD {it.yieldGrade} · {it.yieldScore}/100</span>
-                      })()}
-                      {it.concentrated
-                        ? <span className="lvltag res" style={{ display: 'inline-block' }}>⚙ Concentrada</span>
-                        : <span className="lvltag sup" style={{ display: 'inline-block' }}>🛡 Passiva</span>}
-                      {it.outlook ? <span className="lvltag" style={{ display: 'inline-block', background: 'rgba(168,85,247,.14)', color: 'var(--purple)' }}>🔮 {it.outlook}{it.outlookProb ? ` ${it.outlookProb}%` : ''}</span> : null}
+                    {/* linha 2 — chips essenciais */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                      {it.yieldGrade && <span style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 10, color: '#04120b', background: gc, padding: '2px 8px', borderRadius: 999 }}>{it.yieldGrade} {it.yieldScore}</span>}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: stColor }}><span style={{ width: 7, height: 7, borderRadius: 999, background: stColor, boxShadow: `0 0 7px ${stColor}` }} />{it.verdictLabel}</span>
+                      <span style={{ fontSize: 10.5, color: ilColor, fontFamily: "'JetBrains Mono'" }}>IL {it.il}</span>
+                      <span style={{ fontSize: 12 }}>{it.concentrated ? '⚙' : '🛡'}</span>
+                      {it.sustainable === false && <span style={{ fontSize: 10, color: '#F5A623', fontWeight: 700 }}>⚠ Pico</span>}
                     </div>
-                    <div className="pooltraction" style={{ marginTop: 10 }}>
-                      <div className="pt-cell"><span>APR líquido</span><b style={{ color: netColor }}>{netStr}</b></div>
-                      <div className="pt-cell"><span>Risco IL</span><b style={{ color: ilColor }}>{it.il}</b></div>
-                      <div className="pt-cell"><span>Sustentável</span><b style={{ color: it.sustainable === false ? '#F5A623' : it.sustainable === true ? 'var(--green)' : 'var(--muted)' }}>{it.sustainable === false ? 'Pico ⚠' : it.sustainable === true ? 'Sim' : '—'}</b></div>
+                    {/* linha 3 — tvl + affordance */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 11, color: 'var(--muted)', fontFamily: "'JetBrains Mono'" }}>
+                      <span>TVL {abbr(it.tvl)} · 24h {abbr(it.vol24)}</span>
+                      <span style={{ color: 'var(--faint)' }}>{open ? 'fechar ▴' : 'detalhes ▾'}</span>
                     </div>
-                    {it.yieldBreak && <div className="niche-h" style={{ margin: '10px 2px 0' }}>Nota: Retorno <b>{it.yieldBreak.retorno}/45</b> · Sustent. <b>{it.yieldBreak.sustent}/20</b> · IL <b>{it.yieldBreak.il}/20</b> · Liquidez <b>{it.yieldBreak.liquidez}/15</b></div>}
-                    <div className="niche-h" style={{ margin: '6px 2px 0' }}>Taxa base <b>{it.feeApr}%</b>{it.rewardApr > 0 ? <> · Emissões <b style={{ color: '#F5A623' }}>+{it.rewardApr}%</b></> : null}{it.apyMean30d != null ? <> · média 30d <b>{it.apyMean30d}%</b></> : null} · vol 24h <b>{abbr(it.vol24)}</b>{it.maxEntry ? <> · aporte ≤ <b>{abbr(it.maxEntry)}</b></> : null}</div>
-                    <div className={`verdict verdict-${it.verdictTone}`} style={{ marginTop: 12 }}>
-                      <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
-                      <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
-                    </div>
-                    <div className="grid2" style={{ marginTop: 10 }}>
-                      <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href={it.dexUrl || dataLink} target="_blank" rel="noreferrer">Abrir na {it.dex} ↗</a>
-                      <button className="btn ghost" onClick={() => has(3) ? openCalc(it) : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular {!has(3) && '🔒'}</button>
-                    </div>
-                    {dataLink && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6', marginTop: 8, fontSize: 12, opacity: .82 }} href={dataLink} target="_blank" rel="noreferrer">Ver dados e histórico ↗</a>}
+
+                    {/* EXPANDIDO — só no toque */}
+                    {open && (
+                      <div style={{ marginTop: 14, borderTop: '1px solid var(--line)', paddingTop: 14 }} onClick={stop}>
+                        <div className={`verdict verdict-${it.verdictTone}`}>
+                          <div className={`vic vic-${it.verdictTone}`}>{it.verdictTone === 'buy' ? '✓' : it.verdictTone === 'sell' ? '!' : '~'}</div>
+                          <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
+                        </div>
+                        <div className="pooltraction" style={{ marginTop: 12 }}>
+                          <div className="pt-cell"><span>Taxa base</span><b>{it.feeApr}%</b></div>
+                          <div className="pt-cell"><span>Emissões</span><b style={{ color: it.rewardApr > 0 ? '#F5A623' : 'var(--muted)' }}>{it.rewardApr > 0 ? '+' + it.rewardApr + '%' : '—'}</b></div>
+                          <div className="pt-cell"><span>Sustentável</span><b style={{ color: it.sustainable === false ? '#F5A623' : it.sustainable === true ? 'var(--green)' : 'var(--muted)' }}>{it.sustainable === false ? 'Pico' : it.sustainable === true ? 'Sim' : '—'}</b></div>
+                        </div>
+                        <div className="niche-h" style={{ margin: '10px 2px 0' }}>Nota: Retorno <b>{it.yieldBreak?.retorno}/45</b> · Sustent. <b>{it.yieldBreak?.sustent}/20</b> · IL <b>{it.yieldBreak?.il}/20</b> · Liquidez <b>{it.yieldBreak?.liquidez}/15</b>{it.outlook ? <> · 🔮 <b>{it.outlook}{it.outlookProb ? ` ${it.outlookProb}%` : ''}</b></> : null}{it.apyMean30d != null ? <> · média 30d <b>{it.apyMean30d}%</b></> : null}{it.maxEntry ? <> · aporte ≤ <b>{abbr(it.maxEntry)}</b></> : null}</div>
+                        <div className="grid2" style={{ marginTop: 12 }}>
+                          <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href={it.dexUrl || dataLink} target="_blank" rel="noreferrer" onClick={stop}>Abrir na {it.dex} ↗</a>
+                          <button className="btn ghost" onClick={(e) => { stop(e); has(3) ? openCalc(it) : setUpgrade({ tier: 3, feature: 'Calculadora de IL' }) }}>🧮 Simular {!has(3) && '🔒'}</button>
+                        </div>
+                        {dataLink && <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6', marginTop: 8, fontSize: 12, opacity: .82 }} href={dataLink} target="_blank" rel="noreferrer" onClick={stop}>Ver dados e histórico ↗</a>}
+                      </div>
+                    )}
                   </div>
                 )
               })}
-              {!ideasLoading && ideas && shown.length === 0 && <p className="foot-note">{watchOnly ? 'Você ainda não está vigiando pools nessa visão — toque na ⭐ de um card.' : passiveOnly ? 'Nenhuma pool passiva de qualidade nessa rede agora — tente outra rede ou desmarque "Só passivas".' : 'Sem pares de qualidade nessa rede agora — tente outra rede.'}</p>}
+              {!ideasLoading && ideas && shown.length === 0 && <p className="foot-note">{watchOnly ? 'Você ainda não está vigiando pools nessa visão — toque na ⭐ de um card.' : passiveOnly ? 'Nenhuma pool passiva de qualidade nessa rede agora.' : 'Sem pares de qualidade nessa rede agora — tente outra rede.'}</p>}
               {!ideasLoading && ideas && shown.length > 0 && (
-                <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno da minha entrada {!has(3) && '🔒'}</button>
+                <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno {!has(3) && '🔒'}</button>
               )}
-              <p className="foot-note"><b>Nota de Yield (0–100)</b> = Retorno líquido (45) + Sustentabilidade/previsão (20) + Risco IL (20) + Liquidez/TVL (15). <b>APR líquido</b> = taxa − IL estimado. <b>Emissões</b> são reward de token (somem se o incentivo acaba). <b>🔮 previsão</b> e <b>média 30d</b> vêm da DefiLlama. IL medido em 7d quando disponível. Fonte: DefiLlama (GeckoTerminal de reserva) — não é recomendação. Estude cada pool antes de fornecer liquidez.</p>
+              <p className="foot-note"><b>Nota de Yield (0–100)</b> = retorno líquido + sustentabilidade + IL + liquidez. <b>APR líquido</b> = taxa − IL. Fonte: DefiLlama. Não é recomendação — estude cada pool antes de fornecer liquidez.</p>
             </>)
             })()}
           </section>
@@ -656,8 +706,10 @@ export default function DashboardApp({
             <div className="card">
               <div className="eyebrow" style={{ marginBottom: 4 }}>Capital & patrimônio (R$)</div>
               <div className="big-kv"><span className="k">Capital investido (custo)</span><span className="v num">{brl(capInvestidoBrl)}</span></div>
+              {flows.length > 0 && <div className="big-kv"><span className="k">Líquido aportado <span style={{ color: 'var(--faint)', fontSize: 10 }}>(aportes − retiradas)</span></span><span className="v num">{brl(liquidoAportado)}</span></div>}
               <div className="big-kv"><span className="k">Patrimônio atual</span><span className="v num">{brl(patrBrlF)}</span></div>
               <div className="big-kv"><span className="k">Resultado</span><span className={`v num ${resultBrl >= 0 ? 'up' : 'down'}`}>{(resultBrl >= 0 ? '+' : '-') + brl(Math.abs(resultBrl)).slice(3)} · {pct(resultPct)}</span></div>
+              {flows.length > 0 && <div className="big-kv"><span className="k">Resultado s/ aportado</span><span className={`v num ${resultadoFluxo >= 0 ? 'up' : 'down'}`}>{(resultadoFluxo >= 0 ? '+' : '-') + brl(Math.abs(resultadoFluxo)).slice(3)} · {pct(resultadoFluxoPct)}</span></div>}
             </div>
             <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Onde está o capital</div>
               {distrib.map((x, i) => (<div className="kv" key={i}><span className="k"><span className="dist-dot" style={{ background: x.c }} />{x.n}</span><span className="v num">{brl(x.v * rate)} · {fmt(x.v / distTot * 100, 0)}%</span></div>))}
@@ -667,11 +719,12 @@ export default function DashboardApp({
             </div>
             <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Resultado por período</div>
               <table className="pltable"><thead><tr><th></th><th>%</th><th>R$</th></tr></thead><tbody>
-                <tr><td>Resultado (total)</td><td className={plPeriodoPct >= 0 ? 'up' : 'down'}>{pct(plPeriodoPct)}</td><td className={resultBrl >= 0 ? 'up' : 'down'}>{brl(resultBrl)}</td></tr>
+                <tr><td>Resultado (total)</td><td className={resultadoFluxoPct >= 0 ? 'up' : 'down'}>{pct(resultadoFluxoPct)}</td><td className={resultadoFluxo >= 0 ? 'up' : 'down'}>{brl(resultadoFluxo)}</td></tr>
+                <tr><td>Anualizado (XIRR)</td><td className={xirrPct == null ? '' : xirrPct >= 0 ? 'up' : 'down'}>{xirrPct == null ? '—' : pct(xirrPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
+                <tr><td>Mensal (equiv.)</td><td className={xirrMensalPct == null ? '' : xirrMensalPct >= 0 ? 'up' : 'down'}>{xirrMensalPct == null ? '—' : pct(xirrMensalPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
                 <tr><td>Hoje (1d)</td><td className={!d1 ? '' : d1.pct >= 0 ? 'up' : 'down'}>{d1 ? pct(d1.pct) : '—'}</td><td className={!d1 ? '' : d1.brl >= 0 ? 'up' : 'down'}>{d1 ? brl(d1.brl) : '—'}</td></tr>
                 <tr><td>7 dias</td><td className={!d7 ? '' : d7.pct >= 0 ? 'up' : 'down'}>{d7 ? pct(d7.pct) : '—'}</td><td className={!d7 ? '' : d7.brl >= 0 ? 'up' : 'down'}>{d7 ? brl(d7.brl) : '—'}</td></tr>
                 <tr><td>30 dias</td><td className={!d30 ? '' : d30.pct >= 0 ? 'up' : 'down'}>{d30 ? pct(d30.pct) : '—'}</td><td className={!d30 ? '' : d30.brl >= 0 ? 'up' : 'down'}>{d30 ? brl(d30.brl) : '—'}</td></tr>
-                <tr><td>Anualizado (CAGR)</td><td className={plAnualPct == null ? '' : plAnualPct >= 0 ? 'up' : 'down'}>{plAnualPct == null ? '—' : pct(plAnualPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
               </tbody></table>
               {snaps.length >= 2 && (() => {
                 const pts = snaps.map(s => (s.patrimonio_usd || 0) * (s.brl_rate || rate))
@@ -681,9 +734,9 @@ export default function DashboardApp({
                 const upTrend = pts[pts.length - 1] >= pts[0]
                 return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 44, marginTop: 12 }}><polyline points={d} fill="none" stroke={upTrend ? 'var(--green)' : 'var(--red)'} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>
               })()}
-              <p className="foot-note" style={{ textAlign: 'left', marginTop: 10, padding: 0 }}>{histDays < 2
-                ? 'Começando a registrar seu patrimônio hoje — as janelas de 1/7/30 dias vão preenchendo conforme você abre o app nos próximos dias.'
-                : `Resultado real por janela, do histórico (${histDays} dias registrados). É a variação do seu P&L (patrimônio − custo), neutra a aportes. Anualizado = CAGR estimado.`}</p>
+              <p className="foot-note" style={{ textAlign: 'left', marginTop: 10, padding: 0 }}>{flows.length
+                ? <><b>Resultado (total)</b> = saldo atual − líquido aportado (aportes − retiradas). <b>XIRR</b> = retorno anualizado ponderado pelas datas reais dos aportes{avgAporteYears > 0 ? ` (período médio ~${fmt(avgAporteYears, 1)} anos)` : ''} — a forma correta de anualizar. <b>Mensal</b> = XIRR composto. {snaps.length >= 2 ? `1/7/30 dias vêm do histórico (${histDays}d registrados).` : '1/7/30 dias vão preencher conforme o histórico é registrado.'}</>
+                : 'Cadastre seus aportes e retiradas (com data) na seção acima para calcular o resultado real e o XIRR anualizado.'}</p>
             </div>
             <div className="card section-gap">
               <div className="eyebrow" style={{ marginBottom: 4 }}>Movimentos de caixa (R$)</div>
