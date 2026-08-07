@@ -384,6 +384,57 @@ export default function DashboardApp({
   const abbr = (n: number) => { const a = Math.abs(n); return '$' + (a >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (n / 1e3).toFixed(0) + 'K' : n.toFixed(0)) }
   async function saveFlow() { const f = flowForm; if (!f) return; const payload = { user_id: userId, kind: f.kind, amount: num(f.amount), move_date: f.move_date }; if (f.id) await supabase.from('flows').update(payload).eq('id', f.id); else await supabase.from('flows').insert(payload); setFlowForm(null); await refetch() }
   async function delFlow(id: string) { await supabase.from('flows').delete().eq('id', id); setFlowForm(null); await refetch() }
+
+  // ---- Importar aportes/retiradas em lote (colar do Excel) ----
+  const [importer, setImporter] = useState<any | null>(null)
+  const parseBRL = (s: string): number => {
+    let x = String(s || '').trim().replace(/R\$|\s/g, '')
+    if (!x || x === '-' || x === '—') return 0
+    if (x.includes(',')) x = x.replace(/\./g, '').replace(',', '.')
+    else if ((x.match(/\./g) || []).length > 1) x = x.replace(/\./g, '')
+    const n = parseFloat(x); return isFinite(n) ? Math.abs(n) : 0
+  }
+  const parseDate = (s: string): string | null => {
+    let m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+    if (m) { let y = m[3]; if (y.length === 2) y = '20' + y; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` }
+    m = s.match(/(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`
+    return null
+  }
+  const parseImport = (text: string, mode: 'auto' | 'in' | 'out') => {
+    const rows: { kind: 'in' | 'out'; amount: number; date: string }[] = []
+    let bad = 0
+    for (const raw of (text || '').split(/\r?\n/)) {
+      const line = raw.trim(); if (!line) continue
+      const cells = line.split(/\t|;/).map(c => c.trim())
+      const di = cells.findIndex(c => parseDate(c))
+      if (di < 0) { bad++; continue }
+      const date = parseDate(cells[di])!
+      const after = cells.slice(di + 1)                 // colunas DEPOIS da data (retirada, aporte, ...)
+      if (mode === 'auto') {
+        const vOut = parseBRL(after[0] || ''), vIn = parseBRL(after[1] || '')
+        if (vOut > 0) rows.push({ kind: 'out', amount: vOut, date })
+        if (vIn > 0) rows.push({ kind: 'in', amount: vIn, date })
+        if (vOut <= 0 && vIn <= 0) bad++
+      } else {
+        const nums = after.map(parseBRL).filter(v => v > 0)
+        const v = nums.length ? nums[0] : 0             // no modo single, o 1º valor após a data
+        if (v > 0) rows.push({ kind: mode, amount: v, date }); else bad++
+      }
+    }
+    return { rows, bad }
+  }
+  async function runImport() {
+    const im = importer; if (!im) return
+    const { rows } = parseImport(im.text, im.mode)
+    if (!rows.length) return
+    setImporter({ ...im, busy: true })
+    if (im.replace) await supabase.from('flows').delete().eq('user_id', userId)
+    // insere em blocos de 200
+    for (let i = 0; i < rows.length; i += 200) {
+      await supabase.from('flows').insert(rows.slice(i, i + 200).map(r => ({ user_id: userId, kind: r.kind, amount: r.amount, move_date: r.date })))
+    }
+    setImporter(null); await refetch()
+  }
   async function savePool() {
     const f = poolForm; if (!f) return
     const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, fees: num(f.fees), pool_address: f.pool_address || '', network: f.network || 'base' }
@@ -743,7 +794,10 @@ export default function DashboardApp({
               <div className="big-kv"><span className="k">Aportado</span><span className="v num up">{brl(totIn)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {inFlows.length}x</span></span></div>
               <div className="big-kv"><span className="k">Retirado</span><span className="v num down">{brl(totOut)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {outFlows.length}x</span></span></div>
               <div className="big-kv"><span className="k">% de retiradas</span><span className="v num">{fmt(pctRetirada, 1)}%</span></div>
-              <div style={{ marginTop: 10 }}><button className="addbtn" onClick={() => openFlow(null)}>+ registrar aporte / retirada</button></div>
+              <div className="grid2" style={{ marginTop: 10 }}>
+                <button className="addbtn" style={{ marginTop: 0 }} onClick={() => openFlow(null)}>+ registrar</button>
+                <button className="addbtn" style={{ marginTop: 0 }} onClick={() => setImporter({ text: '', mode: 'auto', replace: false })}>⬆ Importar em lote</button>
+              </div>
             </div>
             {flows.length > 0 && <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Extrato · toque p/ editar</div>
               {flows.slice().sort((a, b) => fdate(b).localeCompare(fdate(a))).map(f => { const d = daysSince(fdate(f)); return (
@@ -946,6 +1000,40 @@ export default function DashboardApp({
             </div></div>
           </div>
         )}
+
+        {/* IMPORTAR APORTES/RETIRADAS EM LOTE */}
+        {importer && (() => {
+          const { rows, bad } = parseImport(importer.text, importer.mode)
+          const nIn = rows.filter(r => r.kind === 'in'), nOut = rows.filter(r => r.kind === 'out')
+          const sumIn = nIn.reduce((s, r) => s + r.amount, 0), sumOut = nOut.reduce((s, r) => s + r.amount, 0)
+          return (
+            <div className="modal" onClick={e => { if (e.target === e.currentTarget && !importer.busy) setImporter(null) }}>
+              <div className="sheet sheet-scroll"><div className="grabber" />
+                <h3>⬆ Importar aportes / retiradas</h3>
+                <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6 }}>Cole direto do Excel — uma linha por movimento. No modo <b>Auto</b>, selecione as colunas <b>DATA, RETIRADA, APORTES</b> (nessa ordem) e cole. Data em dd/mm/aaaa.</p>
+                <div className="pw-toggle" style={{ marginTop: 12 }}>
+                  <button className={importer.mode === 'auto' ? 'on' : ''} onClick={() => setImporter({ ...importer, mode: 'auto' })}>Auto (2 colunas)</button>
+                  <button className={importer.mode === 'in' ? 'on' : ''} onClick={() => setImporter({ ...importer, mode: 'in' })}>Só aportes</button>
+                  <button className={importer.mode === 'out' ? 'on' : ''} onClick={() => setImporter({ ...importer, mode: 'out' })}>Só retiradas</button>
+                </div>
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>Cole aqui</label>
+                  <textarea value={importer.text} onChange={e => setImporter({ ...importer, text: e.target.value })} placeholder={"15/01/2021\t-\t21.500,00\n06/08/2021\t2.000,00\t-"} style={{ width: '100%', minHeight: 130, fontFamily: "'JetBrains Mono'", fontSize: 13, background: 'rgba(14,8,24,.65)', border: '1px solid var(--line-strong)', color: 'var(--text)', borderRadius: 11, padding: 12, resize: 'vertical' }} />
+                </div>
+                <div className="modal-preview" style={{ display: 'block' }}>
+                  <div>Detectados: <b style={{ color: 'var(--green)' }}>{nIn.length} aportes</b> ({brl(sumIn)}) · <b style={{ color: 'var(--red)' }}>{nOut.length} retiradas</b> ({brl(sumOut)})</div>
+                  {bad > 0 && <div style={{ color: '#F5A623', marginTop: 4 }}>{bad} linha(s) sem data/valor reconhecível — serão ignoradas.</div>}
+                  {rows.length > 0 && <div style={{ color: 'var(--muted)', marginTop: 6, fontSize: 12 }}>1º: {rows[0].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[0].amount)} em {new Date(rows[0].date).toLocaleDateString('pt-BR')} · último: {rows[rows.length - 1].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[rows.length - 1].amount)} em {new Date(rows[rows.length - 1].date).toLocaleDateString('pt-BR')}</div>}
+                </div>
+                <label className="as-accept" style={{ marginTop: 12 }}><input type="checkbox" checked={!!importer.replace} onChange={e => setImporter({ ...importer, replace: e.target.checked })} /><span>Substituir tudo — apaga os {flows.length} movimentos atuais antes de importar (use se estiver recadastrando o histórico).</span></label>
+                <div style={{ marginTop: 16, display: 'flex', gap: 9 }}>
+                  <button className="btn" disabled={!rows.length || importer.busy} onClick={runImport}>{importer.busy ? 'Importando…' : `Importar ${rows.length}`}</button>
+                  <button className="btn ghost" disabled={importer.busy} onClick={() => setImporter(null)}>Cancelar</button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* CALCULADORA DE IL / RETORNO (plano completo) */}
         {calc && (() => {
