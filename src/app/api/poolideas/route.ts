@@ -225,6 +225,9 @@ function buildFromLlama(all: any[], netKey: string): any[] {
     const vol24 = nnum(x.volumeUsd1d)
     const il7d = x.il7d != null ? nnum(x.il7d) : null                            // IL medido em 7d (%)
     const apyBase7d = x.apyBase7d != null ? nnum(x.apyBase7d) : null
+    const apyMean30d = x.apyMean30d != null ? nnum(x.apyMean30d) : null           // média de 30d do APY
+    const predClass = x?.predictions?.predictedClass ? String(x.predictions.predictedClass) : ''  // previsão DefiLlama
+    const predProb = x?.predictions?.predictedProbability != null ? Math.round(nnum(x.predictions.predictedProbability)) : null
 
     // custo anual estimado do IL: se há IL medido em 7d, anualiza (regime constante); senão, usa o piso da categoria
     const ilDrag = il7d != null ? Math.min(Math.abs(il7d) * (365 / 7), 400) : TIER_HURDLE[c.tier]
@@ -260,11 +263,25 @@ function buildFromLlama(all: any[], netKey: string): any[] {
     if (c.ilLevel >= 4) reasons.push(`⚠ Par com altcoin: IL severo se o alt cair. Oportunista, não entrada segura.`)
     if (concentrated) reasons.push(`Pool concentrada: exige gestão de faixa — fora do range para de render e o IL trava.`)
 
-    const score = netApr + Math.min(rewardApr, 60) * 0.3
+    // ---- NOTA DE YIELD (0–100), ajustada ao risco e transparente ----
+    // 4 pilares: Retorno líquido (45) · Sustentabilidade/previsão (20) · Risco IL (20) · Liquidez/TVL (15)
+    const pReward = Math.max(0, Math.min(netApr, 60)) / 60 * 45
+    let pSust = sustainable ? 14 : 4
+    if (predClass) { if (/stable|up/i.test(predClass)) pSust += 6 * (predProb ? predProb / 100 : 1); else if (/down/i.test(predClass)) pSust -= 4 }
+    pSust = Math.max(0, Math.min(pSust, 20))
+    const pIL = c.ilLevel === 1 ? 20 : c.ilLevel === 2 ? 16 : c.ilLevel === 3 ? 10 : 3
+    const pTVL = tvl >= 10e6 ? 15 : tvl >= 1e6 ? 10 : tvl >= 500e3 ? 6 : 3
+    const yieldScore = Math.round(Math.max(0, Math.min(100, pReward + pSust + pIL + pTVL)))
+    const yieldGrade = yieldScore >= 80 ? 'A' : yieldScore >= 65 ? 'B' : yieldScore >= 50 ? 'C' : 'D'
+    const yieldBreak = { retorno: Math.round(pReward), sustent: Math.round(pSust), il: pIL, liquidez: pTVL }
+    const outlook = /stable/i.test(predClass) ? 'Estável' : /up/i.test(predClass) ? 'Em alta' : /down/i.test(predClass) ? 'Em queda' : ''
+
+    const score = yieldScore                                                     // <<< ranking pela Nota de Yield
     out.push({
       name: toks.join(' / '), dex, network: net, dexUrl, dataUrl, concentrated, poolType: concentrated ? 'Concentrada' : 'Passiva',
       tvl, vol24, feeApr: Math.round(feeApr), rewardApr: Math.round(rewardApr), netApr: Math.round(netApr),
       il: c.il, ilLevel: c.ilLevel, tier: c.tier, sustainable, maxEntry, daysToCoverIL,
+      yieldScore, yieldGrade, yieldBreak, outlook, outlookProb: predProb, apyMean30d: apyMean30d != null ? Math.round(apyMean30d) : null,
       verdictLabel: label, verdictTone: tone, verdict: reasons.join(' '), highlight: label === 'ENTRAR', score, source: 'llama',
     })
   }

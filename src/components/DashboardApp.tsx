@@ -303,6 +303,40 @@ export default function DashboardApp({
   let off = 0
   const segs = cats.map((x, i) => { const p = x.v / donutTot * 100; const s = (<circle key={i} cx="21" cy="21" r="15.915" fill="transparent" stroke={x.c} strokeWidth="5.5" strokeDasharray={`${p} ${100 - p}`} strokeDashoffset={25 - off} />); off += p; return s })
 
+  // ---- Histórico de patrimônio (snapshots diários) ----
+  const [snaps, setSnaps] = useState<any[]>([])
+  const snapDoneRef = useRef(false)
+  // ---- Alertas de pool em segundo plano (gerados pelo cron, lidos aqui) ----
+  const [poolAlerts, setPoolAlerts] = useState<any[]>([])
+  useEffect(() => {
+    if (!userId) return
+    supabase.from('pool_alert').select('id,name,network,message').eq('seen', false).order('created_at', { ascending: false }).then(({ data, error }) => {
+      if (!error && Array.isArray(data)) setPoolAlerts(data.map((a: any) => ({ id: 'pa' + a.id, _row: a.id, tone: 'buy', icon: '💧', title: `Pool vigiada: ${a.name}`, text: a.message })))
+    }, () => { })
+  }, [userId, supabase])
+  useEffect(() => {
+    if (!alertsOpen || !poolAlerts.length) return
+    const ids = poolAlerts.map(a => a._row).filter(Boolean)
+    if (ids.length) supabase.from('pool_alert').update({ seen: true }).in('id', ids).then(() => { }, () => { })
+  }, [alertsOpen, poolAlerts, supabase])
+  useEffect(() => {
+    if (!userId) return
+    supabase.from('portfolio_snapshot').select('snap_date,patrimonio_usd,custo_usd,brl_rate').order('snap_date').then(({ data, error }) => {
+      if (!error && Array.isArray(data)) setSnaps(data)
+    }, () => { })
+  }, [userId, supabase])
+  useEffect(() => {
+    if (!userId || snapDoneRef.current) return
+    if (!(t.patr > 0 && t.totalInv > 0)) return               // não grava foto vazia (preços ainda carregando)
+    const today = new Date().toISOString().slice(0, 10)
+    if (snaps.some(s => s.snap_date === today)) { snapDoneRef.current = true; return }
+    snapDoneRef.current = true
+    const row = { snap_date: today, patrimonio_usd: +t.patr.toFixed(2), custo_usd: +t.totalInv.toFixed(2), brl_rate: +(brlRate.tether || 0).toFixed(4) }
+    supabase.from('portfolio_snapshot').upsert({ user_id: userId, ...row }, { onConflict: 'user_id,snap_date' })
+      .then(() => setSnaps(prev => [...prev.filter(s => s.snap_date !== today), row].sort((a, b) => a.snap_date.localeCompare(b.snap_date))), () => { })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, t.patr, t.totalInv, snaps])
+
   const recompute = useCallback(async (symbol: string, name: string, cg: string, color: string, meta: number) => {
     const { data } = await supabase.from('transactions').select('*').eq('symbol', symbol)
     const list = (data || []) as Transaction[]
@@ -356,12 +390,25 @@ export default function DashboardApp({
   pools.forEach(pp => { wAge += daysSince(pp.entry_date) * pp.aporte; wSum += pp.aporte })
   const avgDays = wSum ? wAge / wSum : 0, avgMonths = avgDays / 30.44, avgYears = avgDays / 365.25
   const plPeriodoPct = resultPct
-  const plAnualPct = avgYears > 0.02 ? plPeriodoPct / avgYears : plPeriodoPct
-  const plMensalPct = avgMonths > 0.05 ? plPeriodoPct / avgMonths : 0
-  const plDiarioPct = avgDays > 0.5 ? plPeriodoPct / avgDays : 0
-  const plAnualBrl = avgYears > 0.02 ? resultBrl / avgYears : resultBrl
-  const plMensalBrl = avgMonths > 0.05 ? resultBrl / avgMonths : 0
-  const plDiarioBrl = avgDays > 0.5 ? resultBrl / avgDays : 0
+  // Anualizado por JUROS COMPOSTOS (CAGR), não extrapolação linear — e só quando as posições têm
+  // tempo suficiente. Anualizar um retorno de 2 dias gera número sem sentido (ex.: -150% ao mês).
+  const growth = t.totalInv > 0 ? t.patr / t.totalInv : 1
+  const canAnnualize = avgDays >= 30 && growth > 0
+  const plAnualPct = canAnnualize ? Math.max(-99.9, Math.min((Math.pow(growth, 365.25 / avgDays) - 1) * 100, 9999)) : null
+  // Resultado REAL por janela, a partir do histórico de patrimônio (P&L = patr − custo, neutro a aportes)
+  const nowPnlUsd = t.patr - t.totalInv
+  const pnlDelta = (days: number) => {
+    if (!snaps.length) return null
+    const target = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+    const prior = [...snaps].reverse().find(s => s.snap_date <= target)
+    if (!prior) return null
+    const priorPnl = (prior.patrimonio_usd || 0) - (prior.custo_usd || 0)
+    const dUsd = nowPnlUsd - priorPnl
+    return { pct: dUsd / Math.max(prior.custo_usd || 0, 1) * 100, brl: dUsd * rate }
+  }
+  const d1 = pnlDelta(1), d7 = pnlDelta(7), d30 = pnlDelta(30)
+  const histDays = snaps.length ? Math.max(1, Math.round((Date.now() - new Date(snaps[0].snap_date + 'T00:00:00').getTime()) / 86400000)) : 0
+  const allAlerts = [...poolAlerts, ...alerts]
   const distrib = [
     { n: 'Cripto', v: cryptoVal, c: '#FF2E9A' },
     { n: 'Ações/ETFs', v: stockVal, c: '#7C5CFF' },
@@ -407,7 +454,7 @@ export default function DashboardApp({
           <div className="mark" aria-hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.3L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.7L12 2z" /></svg></div>
           <div className="brand"><b>Tiger Invest</b><span>Controle de Ativos</span></div>
           <div className="top-actions">
-            <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{alerts.length > 0 && <span className="bell-badge">{alerts.length}</span>}</button>
+            <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{allAlerts.length > 0 && <span className="bell-badge">{allAlerts.length}</span>}</button>
             {isAdmin && <button className="logout" style={{ borderColor: 'rgba(255,176,32,.5)', color: '#FFB020' }} onClick={() => router.push('/admin')}>Admin</button>}
             <div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button>
           </div>
@@ -537,7 +584,7 @@ export default function DashboardApp({
             ) : (() => {
               const shown = (ideas || []).filter((it: any) => (!passiveOnly || !it.concentrated) && (!watchOnly || watch.includes(keyOf(it))))
               return (<>
-              <div className="niche-h">Ranking por <b>APR líquido</b> (taxa − IL) — o que sobra depois que a perda impermanente come parte da taxa. Em <b>🏆 Todas</b>, o melhor par de cada tipo na melhor rede.</div>
+              <div className="niche-h">Ranking pela <b>Nota de Yield</b> (0–100), yield ajustado ao risco: retorno líquido + sustentabilidade + IL + liquidez. Em <b>🏆 Todas</b>, o melhor par de cada tipo na melhor rede.</div>
               <div className="netbar">
                 {([['all', '🏆 Todas'], ['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
                   <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
@@ -565,17 +612,23 @@ export default function DashboardApp({
                       <div className="poolt"><b>{it.name}</b><span>{it.dex} · {it.network} · TVL {abbr(it.tvl)}</span></div>
                       <button onClick={() => toggleStar(it)} title="Vigiar" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: '0 2px', color: starred ? '#F5C850' : 'var(--faint)' }}>{starred ? '★' : '☆'}</button>
                     </div>
-                    <div style={{ marginTop: 8 }}>
+                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {it.yieldGrade && (() => {
+                        const gc = it.yieldGrade === 'A' ? 'var(--green)' : it.yieldGrade === 'B' ? '#7CE0A0' : it.yieldGrade === 'C' ? '#F5A623' : 'var(--red)'
+                        return <span style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 11, color: '#04120b', background: gc, padding: '3px 10px', borderRadius: 999 }}>YIELD {it.yieldGrade} · {it.yieldScore}/100</span>
+                      })()}
                       {it.concentrated
-                        ? <span className="lvltag res" style={{ display: 'inline-block' }}>⚙ Concentrada · exige gestão de faixa</span>
-                        : <span className="lvltag sup" style={{ display: 'inline-block' }}>🛡 Passiva · deixa rodar</span>}
+                        ? <span className="lvltag res" style={{ display: 'inline-block' }}>⚙ Concentrada</span>
+                        : <span className="lvltag sup" style={{ display: 'inline-block' }}>🛡 Passiva</span>}
+                      {it.outlook ? <span className="lvltag" style={{ display: 'inline-block', background: 'rgba(168,85,247,.14)', color: 'var(--purple)' }}>🔮 {it.outlook}{it.outlookProb ? ` ${it.outlookProb}%` : ''}</span> : null}
                     </div>
                     <div className="pooltraction" style={{ marginTop: 10 }}>
                       <div className="pt-cell"><span>APR líquido</span><b style={{ color: netColor }}>{netStr}</b></div>
                       <div className="pt-cell"><span>Risco IL</span><b style={{ color: ilColor }}>{it.il}</b></div>
                       <div className="pt-cell"><span>Sustentável</span><b style={{ color: it.sustainable === false ? '#F5A623' : it.sustainable === true ? 'var(--green)' : 'var(--muted)' }}>{it.sustainable === false ? 'Pico ⚠' : it.sustainable === true ? 'Sim' : '—'}</b></div>
                     </div>
-                    <div className="niche-h" style={{ margin: '10px 2px 0' }}>Taxa base <b>{it.feeApr}%</b>{it.rewardApr > 0 ? <> · Emissões <b style={{ color: '#F5A623' }}>+{it.rewardApr}%</b></> : null} · vol 24h <b>{abbr(it.vol24)}</b>{it.maxEntry ? <> · aporte ≤ <b>{abbr(it.maxEntry)}</b></> : null}</div>
+                    {it.yieldBreak && <div className="niche-h" style={{ margin: '10px 2px 0' }}>Nota: Retorno <b>{it.yieldBreak.retorno}/45</b> · Sustent. <b>{it.yieldBreak.sustent}/20</b> · IL <b>{it.yieldBreak.il}/20</b> · Liquidez <b>{it.yieldBreak.liquidez}/15</b></div>}
+                    <div className="niche-h" style={{ margin: '6px 2px 0' }}>Taxa base <b>{it.feeApr}%</b>{it.rewardApr > 0 ? <> · Emissões <b style={{ color: '#F5A623' }}>+{it.rewardApr}%</b></> : null}{it.apyMean30d != null ? <> · média 30d <b>{it.apyMean30d}%</b></> : null} · vol 24h <b>{abbr(it.vol24)}</b>{it.maxEntry ? <> · aporte ≤ <b>{abbr(it.maxEntry)}</b></> : null}</div>
                     <div className={`verdict verdict-${it.verdictTone}`} style={{ marginTop: 12 }}>
                       <div className={`vic vic-${it.verdictTone}`}>{vIcon}</div>
                       <div><b>{it.verdictLabel}</b><p>{it.verdict}</p></div>
@@ -592,7 +645,7 @@ export default function DashboardApp({
               {!ideasLoading && ideas && shown.length > 0 && (
                 <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno da minha entrada {!has(3) && '🔒'}</button>
               )}
-              <p className="foot-note"><b>APR líquido</b> = taxa de swap − IL estimado (o que realmente sobra). <b>Taxa base</b> vem de swaps (sustentável); <b>Emissões</b> são reward de token (somem se o incentivo acaba). <b>Sustentável</b> compara o APR de agora com a média de 7 dias — "Pico" alerta APR inflado. IL medido em 7d quando disponível. Fonte: DefiLlama (com GeckoTerminal de reserva) — não é recomendação. Estude cada pool antes de fornecer liquidez.</p>
+              <p className="foot-note"><b>Nota de Yield (0–100)</b> = Retorno líquido (45) + Sustentabilidade/previsão (20) + Risco IL (20) + Liquidez/TVL (15). <b>APR líquido</b> = taxa − IL estimado. <b>Emissões</b> são reward de token (somem se o incentivo acaba). <b>🔮 previsão</b> e <b>média 30d</b> vêm da DefiLlama. IL medido em 7d quando disponível. Fonte: DefiLlama (GeckoTerminal de reserva) — não é recomendação. Estude cada pool antes de fornecer liquidez.</p>
             </>)
             })()}
           </section>
@@ -614,11 +667,23 @@ export default function DashboardApp({
             </div>
             <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Resultado por período</div>
               <table className="pltable"><thead><tr><th></th><th>%</th><th>R$</th></tr></thead><tbody>
-                <tr><td>Período</td><td className={plPeriodoPct >= 0 ? 'up' : 'down'}>{pct(plPeriodoPct)}</td><td className={resultBrl >= 0 ? 'up' : 'down'}>{brl(resultBrl)}</td></tr>
-                <tr><td>Anual</td><td className={plAnualPct >= 0 ? 'up' : 'down'}>{pct(plAnualPct)}</td><td className={plAnualBrl >= 0 ? 'up' : 'down'}>{brl(plAnualBrl)}</td></tr>
-                <tr><td>Mensal</td><td className={plMensalPct >= 0 ? 'up' : 'down'}>{pct(plMensalPct)}</td><td className={plMensalBrl >= 0 ? 'up' : 'down'}>{brl(plMensalBrl)}</td></tr>
-                <tr><td>Diário</td><td className={plDiarioPct >= 0 ? 'up' : 'down'}>{pct(plDiarioPct)}</td><td className={plDiarioBrl >= 0 ? 'up' : 'down'}>{brl(plDiarioBrl)}</td></tr>
+                <tr><td>Resultado (total)</td><td className={plPeriodoPct >= 0 ? 'up' : 'down'}>{pct(plPeriodoPct)}</td><td className={resultBrl >= 0 ? 'up' : 'down'}>{brl(resultBrl)}</td></tr>
+                <tr><td>Hoje (1d)</td><td className={!d1 ? '' : d1.pct >= 0 ? 'up' : 'down'}>{d1 ? pct(d1.pct) : '—'}</td><td className={!d1 ? '' : d1.brl >= 0 ? 'up' : 'down'}>{d1 ? brl(d1.brl) : '—'}</td></tr>
+                <tr><td>7 dias</td><td className={!d7 ? '' : d7.pct >= 0 ? 'up' : 'down'}>{d7 ? pct(d7.pct) : '—'}</td><td className={!d7 ? '' : d7.brl >= 0 ? 'up' : 'down'}>{d7 ? brl(d7.brl) : '—'}</td></tr>
+                <tr><td>30 dias</td><td className={!d30 ? '' : d30.pct >= 0 ? 'up' : 'down'}>{d30 ? pct(d30.pct) : '—'}</td><td className={!d30 ? '' : d30.brl >= 0 ? 'up' : 'down'}>{d30 ? brl(d30.brl) : '—'}</td></tr>
+                <tr><td>Anualizado (CAGR)</td><td className={plAnualPct == null ? '' : plAnualPct >= 0 ? 'up' : 'down'}>{plAnualPct == null ? '—' : pct(plAnualPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
               </tbody></table>
+              {snaps.length >= 2 && (() => {
+                const pts = snaps.map(s => (s.patrimonio_usd || 0) * (s.brl_rate || rate))
+                const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1
+                const W = 300, H = 44
+                const d = pts.map((v, i) => `${(i / (pts.length - 1)) * W},${H - ((v - min) / span) * (H - 4) - 2}`).join(' ')
+                const upTrend = pts[pts.length - 1] >= pts[0]
+                return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 44, marginTop: 12 }}><polyline points={d} fill="none" stroke={upTrend ? 'var(--green)' : 'var(--red)'} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>
+              })()}
+              <p className="foot-note" style={{ textAlign: 'left', marginTop: 10, padding: 0 }}>{histDays < 2
+                ? 'Começando a registrar seu patrimônio hoje — as janelas de 1/7/30 dias vão preenchendo conforme você abre o app nos próximos dias.'
+                : `Resultado real por janela, do histórico (${histDays} dias registrados). É a variação do seu P&L (patrimônio − custo), neutra a aportes. Anualizado = CAGR estimado.`}</p>
             </div>
             <div className="card section-gap">
               <div className="eyebrow" style={{ marginBottom: 4 }}>Movimentos de caixa (R$)</div>
@@ -838,9 +903,10 @@ export default function DashboardApp({
           if (calc.v3 && w > 0) { const pa = 1 - w / 100, pb = 1 + w / 100; const e = pa > 0 ? 1 / (1 - Math.pow(pa / pb, 0.25)) : 1; E = isFinite(e) && e > 1 ? e : 1 }
           const kUsed = outOfRange ? (chg > 0 ? 1 + w / 100 : Math.max(0.0001, 1 - w / 100)) : Math.max(0.0001, k)
           const ilBasePct = (2 * Math.sqrt(kUsed) / (1 + kUsed) - 1) * 100
-          const ilPctEff = calc.v3 ? ilBasePct * E : ilBasePct
-          const effApr = calc.v3 ? apr * E : apr
-          const fees = cap * (effApr / 100) * (days / 365)
+          // O APR informado JÁ é o da pool (v3 já reflete a concentração). Não multiplicar pela
+          // eficiência de novo — isso inflava o retorno. E fica só como informação de "porquê o APR é alto".
+          const ilPctEff = ilBasePct
+          const fees = cap * (apr / 100) * (days / 365)
           const ilLoss = cap * Math.abs(ilPctEff / 100)
           const net = fees - ilLoss
           return (
@@ -853,7 +919,7 @@ export default function DashboardApp({
                 </div>
                 <div className="grid2">
                   <div className="field"><label>Variação do volátil (%)</label><input inputMode="decimal" value={calc.chg} onChange={e => setCalc({ ...calc, chg: e.target.value })} placeholder="30 = subiu 30%" /></div>
-                  <div className="field"><label>APR de taxas (%)</label><input inputMode="decimal" value={calc.apr} onChange={e => setCalc({ ...calc, apr: e.target.value })} /></div>
+                  <div className="field"><label>APR de taxas da pool (%)</label><input inputMode="decimal" value={calc.apr} onChange={e => setCalc({ ...calc, apr: e.target.value })} placeholder="o APR que a pool mostra" /></div>
                 </div>
                 <div className="pw-toggle" style={{ marginTop: 12 }}>
                   <button className={!calc.v3 ? 'on' : ''} onClick={() => setCalc({ ...calc, v3: false })}>Full-range (v2)</button>
@@ -863,9 +929,9 @@ export default function DashboardApp({
 
                 <div className="card" style={{ marginTop: 16 }}>
                   <div className="big-kv"><span className="k">Perda impermanente (IL)</span><span className="v" style={{ color: 'var(--red)' }}>{ilPctEff.toFixed(2)}% · -{usd(ilLoss).slice(1)}</span></div>
-                  <div className="big-kv"><span className="k">Taxas no período{calc.v3 ? ` (APR ~${Math.round(effApr)}%)` : ''}</span><span className="v" style={{ color: 'var(--green)' }}>+{usd(fees).slice(1)}</span></div>
+                  <div className="big-kv"><span className="k">Taxas no período</span><span className="v" style={{ color: 'var(--green)' }}>+{usd(fees).slice(1)}</span></div>
                   <div className="big-kv"><span className="k">Líquido vs. segurar</span><span className="v" style={{ color: net >= 0 ? 'var(--green)' : 'var(--red)' }}>{net >= 0 ? '+' : '-'}{usd(Math.abs(net)).slice(1)}</span></div>
-                  {calc.v3 && <div className="big-kv"><span className="k">Eficiência de capital (v3)</span><span className="v">{E.toFixed(1)}×</span></div>}
+                  {calc.v3 && <div className="big-kv"><span className="k">Eficiência de capital (v3)</span><span className="v">{E.toFixed(1)}× <span className="sighint">(só informativo)</span></span></div>}
                 </div>
 
                 <div className={`verdict verdict-${net >= 0 ? 'buy' : 'sell'}`} style={{ marginTop: 12 }}>
@@ -873,7 +939,7 @@ export default function DashboardApp({
                   <div><b>{net >= 0 ? 'TAXA COBRE O IL' : 'IL MAIOR QUE A TAXA'}</b><p>{net >= 0 ? `Neste cenário as taxas (${usd(fees)}) superam o IL — sobra líquida de ${usd(net)} vs. só segurar os ativos.` : `Neste cenário o IL (-${usd(ilLoss).slice(1)}) supera as taxas — você perde ${usd(Math.abs(net))} vs. só segurar.`}</p></div>
                 </div>
                 {outOfRange && <p className="foot-note" style={{ color: '#F5A623' }}>⚠ Com faixa de ±{calc.width}% e variação de {calc.chg}%, o preço <b>saiu do range</b>: a posição vira 100% do ativo mais fraco e para de gerar taxa. IL travado no limite da faixa.</p>}
-                <p className="foot-note">Modelo 50/50 padrão. O modo v3 é aproximado: dentro da faixa, taxa e IL são ampliados pela eficiência de capital. Não considera gas nem emissões de reward. Estimativa educacional — não é recomendação.</p>
+                <p className="foot-note">Modelo 50/50 padrão. Use o <b>APR que a pool realmente mostra</b> — em v3 ele já embute a concentração (a eficiência ao lado só explica por que é alto; não multiplica o retorno). O maior risco do v3 é <b>sair da faixa</b>: aí para de render e o IL trava. Não considera gas. Concentrada também tende a um IL um pouco maior que o mostrado. Estimativa educacional — não é recomendação.</p>
                 <button className="btn ghost" style={{ marginTop: 12 }} onClick={() => setCalc(null)}>Fechar</button>
               </div>
             </div>
@@ -913,8 +979,8 @@ export default function DashboardApp({
             <div className="sheet"><div className="grabber" />
               <div className="sheet-scroll">
                 <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ width: 22, height: 22 }}><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>Alertas</h3>
-                {alerts.length === 0 && <p className="foot-note" style={{ marginTop: 18 }}>Nenhum alerta agora. Você é avisado quando o preço bate num nível seu, no alvo/stop de uma compra, ou quando uma pool sai do range.</p>}
-                {alerts.map(a => (
+                {allAlerts.length === 0 && <p className="foot-note" style={{ marginTop: 18 }}>Nenhum alerta agora. Você é avisado quando o preço bate num nível seu, no alvo/stop de uma compra, ou quando uma pool sai do range.</p>}
+                {allAlerts.map(a => (
                   <div className={`alert-item alert-${a.tone}`} key={a.id}>
                     <div className="alert-ic">{a.icon}</div>
                     <div className="alert-t"><b>{a.title}</b><span>{a.text}</span></div>
