@@ -190,14 +190,30 @@ export default function DashboardApp({
     capital: '1000', chg: '30', days: '30', v3: false, width: '20',
   })
 
-  // Watchlist de pools (local do aparelho — sem servidor). Vigia pares e filtra por eles.
+  // Watchlist de pools. Cache local imediato + sync com a nuvem (tabela pool_watch) quando logado.
   useEffect(() => { try { const w = JSON.parse(localStorage.getItem('tiger_pool_watch') || '[]'); if (Array.isArray(w)) setWatch(w) } catch { } }, [])
+  useEffect(() => {
+    if (!userId) return
+    // se a tabela ainda não existir (SQL não rodado), o erro é ignorado e segue no modo local
+    supabase.from('pool_watch').select('pool_key').then(({ data, error }) => {
+      if (!error && Array.isArray(data)) {
+        const keys = data.map((r: any) => r.pool_key)
+        setWatch(keys)
+        try { localStorage.setItem('tiger_pool_watch', JSON.stringify(keys)) } catch { }
+      }
+    }, () => { })
+  }, [userId, supabase])
   const keyOf = (it: any) => `${it.name}|${it.network}`
-  const toggleStar = (it: any) => setWatch(prev => {
-    const k = keyOf(it); const nx = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]
+  const toggleStar = (it: any) => {
+    const k = keyOf(it); const had = watch.includes(k)
+    const nx = had ? watch.filter(x => x !== k) : [...watch, k]
+    setWatch(nx)
     try { localStorage.setItem('tiger_pool_watch', JSON.stringify(nx)) } catch { }
-    return nx
-  })
+    if (userId) {
+      if (had) supabase.from('pool_watch').delete().eq('pool_key', k).then(() => { }, () => { })
+      else supabase.from('pool_watch').upsert({ user_id: userId, pool_key: k, name: it.name, network: it.network, dex: it.dex }, { onConflict: 'user_id,pool_key' }).then(() => { }, () => { })
+    }
+  }
 
   useEffect(() => {
     const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
