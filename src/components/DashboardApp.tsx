@@ -77,6 +77,7 @@ export default function DashboardApp({
   const [txForm, setTxForm] = useState<any | null>(null)
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
+  const [curr, setCurr] = useState<'BRL' | 'USD'>('BRL')
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
@@ -477,6 +478,17 @@ export default function DashboardApp({
   // período médio real dos aportes (ponderado pelo valor) — o "período correto"
   const wAporteDays = inFlows.reduce((s, f) => s + f.amount * daysSince(fdate(f)), 0)
   const avgAporteYears = totIn ? (wAporteDays / totIn) / 365.25 : 0
+  // tempo DECORRIDO desde o 1º movimento (o "quanto tempo percorreu" da planilha)
+  const firstFlowDate = flows.length ? flows.map(fdate).sort()[0] : null
+  const spanDays = firstFlowDate ? daysSince(firstFlowDate) : 0
+  const spanMonths = spanDays / 30.44, spanYears = spanDays / 365.25
+  // P/L por período — método LINEAR da sua planilha (resultado ÷ tempo decorrido)
+  const linAnualPct = spanYears > 0 ? resultadoFluxoPct / spanYears : null, linAnualBrl = spanYears > 0 ? resultadoFluxo / spanYears : null
+  const linMensalPct = spanMonths > 0 ? resultadoFluxoPct / spanMonths : null, linMensalBrl = spanMonths > 0 ? resultadoFluxo / spanMonths : null
+  const linDiarioPct = spanDays > 0 ? resultadoFluxoPct / spanDays : null, linDiarioBrl = spanDays > 0 ? resultadoFluxo / spanDays : null
+  // conversor de moeda p/ a visão (valores estão em BRL; em USD divide pela cotação)
+  const money = (brlVal: number) => curr === 'USD' ? usd(brlVal / (rate || 1)) : brl(brlVal)
+  const moneySigned = (brlVal: number) => (brlVal >= 0 ? '+' : '-') + money(Math.abs(brlVal)).replace(/^[-+]?/, '')
   // Resultado REAL por janela, a partir do histórico de patrimônio (P&L = patr − custo, neutro a aportes)
   const nowPnlUsd = t.patr - t.totalInv
   const pnlDelta = (days: number) => {
@@ -753,58 +765,55 @@ export default function DashboardApp({
 
           {/* APORTES */}
           <section className={`screen ${tab === 'aportes' ? 'active' : ''}`}>
-            <div className="eyebrow">Fluxo de caixa · visão geral</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div className="eyebrow" style={{ margin: 0 }}>Fluxo de caixa · visão geral</div>
+              <div className="pw-toggle" style={{ width: 'auto', margin: 0 }}>
+                <button className={curr === 'BRL' ? 'on' : ''} style={{ padding: '6px 14px', flex: 'none' }} onClick={() => setCurr('BRL')}>R$</button>
+                <button className={curr === 'USD' ? 'on' : ''} style={{ padding: '6px 14px', flex: 'none' }} onClick={() => setCurr('USD')}>US$</button>
+              </div>
+            </div>
             <div className="card">
-              <div className="eyebrow" style={{ marginBottom: 4 }}>Capital & patrimônio (R$)</div>
-              <div className="big-kv"><span className="k">Capital investido (custo)</span><span className="v num">{brl(capInvestidoBrl)}</span></div>
-              {flows.length > 0 && <div className="big-kv"><span className="k">Líquido aportado <span style={{ color: 'var(--faint)', fontSize: 10 }}>(aportes − retiradas)</span></span><span className="v num">{brl(liquidoAportado)}</span></div>}
-              <div className="big-kv"><span className="k">Patrimônio atual</span><span className="v num">{brl(patrBrlF)}</span></div>
-              <div className="big-kv"><span className="k">Resultado</span><span className={`v num ${resultBrl >= 0 ? 'up' : 'down'}`}>{(resultBrl >= 0 ? '+' : '-') + brl(Math.abs(resultBrl)).slice(3)} · {pct(resultPct)}</span></div>
-              {flows.length > 0 && <div className="big-kv"><span className="k">Resultado s/ aportado</span><span className={`v num ${resultadoFluxo >= 0 ? 'up' : 'down'}`}>{(resultadoFluxo >= 0 ? '+' : '-') + brl(Math.abs(resultadoFluxo)).slice(3)} · {pct(resultadoFluxoPct)}</span></div>}
+              <div className="eyebrow" style={{ marginBottom: 4 }}>Capital & patrimônio ({curr === 'USD' ? 'US$' : 'R$'})</div>
+              <div className="big-kv"><span className="k">Aportado <span style={{ color: 'var(--faint)', fontSize: 10 }}>· {inFlows.length}x</span></span><span className="v num up">{money(totIn)}</span></div>
+              <div className="big-kv"><span className="k">Retirado <span style={{ color: 'var(--faint)', fontSize: 10 }}>· {outFlows.length}x</span></span><span className="v num down">{money(totOut)}</span></div>
+              <div className="big-kv"><span className="k">Líquido aportado <span style={{ color: 'var(--faint)', fontSize: 10 }}>(aportes − retiradas)</span></span><span className="v num">{money(liquidoAportado)}</span></div>
+              <div className="big-kv"><span className="k">Patrimônio atual</span><span className="v num">{money(patrBrlF)}</span></div>
+              <div className="big-kv"><span className="k">Resultado (período)</span><span className={`v num ${resultadoFluxo >= 0 ? 'up' : 'down'}`}>{moneySigned(resultadoFluxo)} · {pct(resultadoFluxoPct)}</span></div>
             </div>
             <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Onde está o capital</div>
-              {distrib.map((x, i) => (<div className="kv" key={i}><span className="k"><span className="dist-dot" style={{ background: x.c }} />{x.n}</span><span className="v num">{brl(x.v * rate)} · {fmt(x.v / distTot * 100, 0)}%</span></div>))}
+              {distrib.map((x, i) => (<div className="kv" key={i}><span className="k"><span className="dist-dot" style={{ background: x.c }} />{x.n}</span><span className="v num">{money(x.v * rate)} · {fmt(x.v / distTot * 100, 0)}%</span></div>))}
             </div>
-            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 8 }}>Tempo médio das posições</div>
-              <div className="trio"><div className="stat"><div className="k">Dias</div><div className="v num">{fmt(avgDays, 0)}</div></div><div className="stat"><div className="k">Meses</div><div className="v num">{fmt(avgMonths, 1)}</div></div><div className="stat"><div className="k">Anos</div><div className="v num">{fmt(avgYears, 1)}</div></div></div>
+            <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 8 }}>{flows.length ? 'Tempo decorrido (desde o 1º aporte)' : 'Tempo médio das posições'}</div>
+              {flows.length
+                ? <div className="trio"><div className="stat"><div className="k">Dias</div><div className="v num">{fmt(spanDays, 0)}</div></div><div className="stat"><div className="k">Meses</div><div className="v num">{fmt(spanMonths, 1)}</div></div><div className="stat"><div className="k">Anos</div><div className="v num">{fmt(spanYears, 1)}</div></div></div>
+                : <div className="trio"><div className="stat"><div className="k">Dias</div><div className="v num">{fmt(avgDays, 0)}</div></div><div className="stat"><div className="k">Meses</div><div className="v num">{fmt(avgMonths, 1)}</div></div><div className="stat"><div className="k">Anos</div><div className="v num">{fmt(avgYears, 1)}</div></div></div>}
             </div>
             <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 6 }}>Resultado por período</div>
-              <table className="pltable"><thead><tr><th></th><th>%</th><th>R$</th></tr></thead><tbody>
-                <tr><td>Resultado (total)</td><td className={resultadoFluxoPct >= 0 ? 'up' : 'down'}>{pct(resultadoFluxoPct)}</td><td className={resultadoFluxo >= 0 ? 'up' : 'down'}>{brl(resultadoFluxo)}</td></tr>
-                <tr><td>Anualizado (XIRR)</td><td className={xirrPct == null ? '' : xirrPct >= 0 ? 'up' : 'down'}>{xirrPct == null ? '—' : pct(xirrPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
-                <tr><td>Mensal (equiv.)</td><td className={xirrMensalPct == null ? '' : xirrMensalPct >= 0 ? 'up' : 'down'}>{xirrMensalPct == null ? '—' : pct(xirrMensalPct)}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
-                <tr><td>Hoje (1d)</td><td className={!d1 ? '' : d1.pct >= 0 ? 'up' : 'down'}>{d1 ? pct(d1.pct) : '—'}</td><td className={!d1 ? '' : d1.brl >= 0 ? 'up' : 'down'}>{d1 ? brl(d1.brl) : '—'}</td></tr>
-                <tr><td>7 dias</td><td className={!d7 ? '' : d7.pct >= 0 ? 'up' : 'down'}>{d7 ? pct(d7.pct) : '—'}</td><td className={!d7 ? '' : d7.brl >= 0 ? 'up' : 'down'}>{d7 ? brl(d7.brl) : '—'}</td></tr>
-                <tr><td>30 dias</td><td className={!d30 ? '' : d30.pct >= 0 ? 'up' : 'down'}>{d30 ? pct(d30.pct) : '—'}</td><td className={!d30 ? '' : d30.brl >= 0 ? 'up' : 'down'}>{d30 ? brl(d30.brl) : '—'}</td></tr>
+              <table className="pltable"><thead><tr><th></th><th>%</th><th>{curr === 'USD' ? 'US$' : 'R$'}</th></tr></thead><tbody>
+                <tr><td>Período</td><td className={resultadoFluxoPct >= 0 ? 'up' : 'down'}>{pct(resultadoFluxoPct)}</td><td className={resultadoFluxo >= 0 ? 'up' : 'down'}>{money(resultadoFluxo)}</td></tr>
+                <tr><td>Anual</td><td className={linAnualPct == null ? '' : linAnualPct >= 0 ? 'up' : 'down'}>{linAnualPct == null ? '—' : pct(linAnualPct)}</td><td className={linAnualBrl == null ? '' : linAnualBrl >= 0 ? 'up' : 'down'}>{linAnualBrl == null ? '—' : money(linAnualBrl)}</td></tr>
+                <tr><td>Mensal</td><td className={linMensalPct == null ? '' : linMensalPct >= 0 ? 'up' : 'down'}>{linMensalPct == null ? '—' : pct(linMensalPct)}</td><td className={linMensalBrl == null ? '' : linMensalBrl >= 0 ? 'up' : 'down'}>{linMensalBrl == null ? '—' : money(linMensalBrl)}</td></tr>
+                <tr><td>Diário</td><td className={linDiarioPct == null ? '' : linDiarioPct >= 0 ? 'up' : 'down'}>{linDiarioPct == null ? '—' : pct(linDiarioPct)}</td><td className={linDiarioBrl == null ? '' : linDiarioBrl >= 0 ? 'up' : 'down'}>{linDiarioBrl == null ? '—' : money(linDiarioBrl)}</td></tr>
+                <tr><td style={{ color: 'var(--pink-bright)' }}>Retorno real (XIRR)</td><td className={xirrPct == null ? '' : xirrPct >= 0 ? 'up' : 'down'}>{xirrPct == null ? '—' : pct(xirrPct) + '/ano'}</td><td style={{ color: 'var(--muted)' }}>—</td></tr>
               </tbody></table>
-              {snaps.length >= 2 && (() => {
-                const pts = snaps.map(s => (s.patrimonio_usd || 0) * (s.brl_rate || rate))
-                const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1
-                const W = 300, H = 44
-                const d = pts.map((v, i) => `${(i / (pts.length - 1)) * W},${H - ((v - min) / span) * (H - 4) - 2}`).join(' ')
-                const upTrend = pts[pts.length - 1] >= pts[0]
-                return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 44, marginTop: 12 }}><polyline points={d} fill="none" stroke={upTrend ? 'var(--green)' : 'var(--red)'} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>
-              })()}
               <p className="foot-note" style={{ textAlign: 'left', marginTop: 10, padding: 0 }}>{flows.length
-                ? <><b>Resultado (total)</b> = saldo atual − líquido aportado (aportes − retiradas). <b>XIRR</b> = retorno anualizado ponderado pelas datas reais dos aportes{avgAporteYears > 0 ? ` (período médio ~${fmt(avgAporteYears, 1)} anos)` : ''} — a forma correta de anualizar. <b>Mensal</b> = XIRR composto. {snaps.length >= 2 ? `1/7/30 dias vêm do histórico (${histDays}d registrados).` : '1/7/30 dias vão preencher conforme o histórico é registrado.'}</>
-                : 'Cadastre seus aportes e retiradas (com data) na seção acima para calcular o resultado real e o XIRR anualizado.'}</p>
+                ? <><b>Período</b> = patrimônio − líquido aportado (sua metodologia). <b>Anual/Mensal/Diário</b> dividem esse resultado pelo tempo decorrido — igual à sua planilha. <b>Retorno real (XIRR)</b> é o retorno anualizado composto e ponderado pelas datas de cada aporte: mais preciso que a divisão linear, porque considera que aportes recentes renderam por menos tempo. Use o XIRR pra comparar performance; a divisão linear pra leitura rápida.</>
+                : 'Cadastre seus aportes e retiradas (com data) para calcular o resultado real por período.'}</p>
             </div>
             <div className="card section-gap">
-              <div className="eyebrow" style={{ marginBottom: 4 }}>Movimentos de caixa (R$)</div>
-              <div className="big-kv"><span className="k">Aportado</span><span className="v num up">{brl(totIn)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {inFlows.length}x</span></span></div>
-              <div className="big-kv"><span className="k">Retirado</span><span className="v num down">{brl(totOut)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>· {outFlows.length}x</span></span></div>
-              <div className="big-kv"><span className="k">% de retiradas</span><span className="v num">{fmt(pctRetirada, 1)}%</span></div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>Registrar movimento</div>
+              <div className="big-kv"><span className="k">% de retiradas s/ aportes</span><span className="v num">{fmt(pctRetirada, 1)}%</span></div>
               <div className="grid2" style={{ marginTop: 10 }}>
                 <button className="addbtn" style={{ marginTop: 0 }} onClick={() => openFlow(null)}>+ registrar</button>
                 <button className="addbtn" style={{ marginTop: 0 }} onClick={() => setImporter({ text: '', mode: 'auto', replace: false })}>⬆ Importar em lote</button>
               </div>
             </div>
-            {flows.length > 0 && <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Extrato · toque p/ editar</div>
+            {flows.length > 0 && <div className="card section-gap"><div className="eyebrow" style={{ marginBottom: 4 }}>Extrato · toque p/ editar a data e o valor</div>
               {flows.slice().sort((a, b) => fdate(b).localeCompare(fdate(a))).map(f => { const d = daysSince(fdate(f)); return (
                 <div className="flow-item" key={f.id} onClick={() => openFlow(f)} style={{ cursor: 'pointer' }}>
                   <div className={`flow-ic ${f.kind === 'in' ? 'flow-in' : 'flow-out'}`}>{f.kind === 'in' ? '↓' : '↑'}</div>
-                  <div className="flow-t"><b>{f.kind === 'in' ? 'Aporte' : 'Retirada'}</b><span>{new Date(fdate(f)).toLocaleDateString('pt-BR')} · {d}d · {fmt(d / 30.44, 1)}m · {fmt(d / 365.25, 1)}a</span></div>
-                  <div className={`flow-v ${f.kind === 'in' ? 'up' : 'down'}`}>{brl(f.amount)}</div>
+                  <div className="flow-t"><b>{f.kind === 'in' ? 'Aporte' : 'Retirada'}</b><span>{new Date(fdate(f)).toLocaleDateString('pt-BR')} · há {d}d · {fmt(d / 365.25, 1)}a</span></div>
+                  <div className={`flow-v ${f.kind === 'in' ? 'up' : 'down'}`}>{money(f.amount)}</div>
                 </div>) })}
             </div>}
           </section>
@@ -1093,7 +1102,9 @@ export default function DashboardApp({
             <div className="sheet"><div className="grabber" />
               <h3>{flowForm.id ? 'Editar movimento' : 'Novo movimento'}</h3>
               <div className="field"><label>Tipo</label><select value={flowForm.kind} onChange={e => setFlowForm({ ...flowForm, kind: e.target.value })}><option value="in">Aporte</option><option value="out">Retirada</option></select></div>
-              <div className="grid2"><div className="field"><label>Valor R$</label><input inputMode="decimal" value={flowForm.amount} onChange={e => setFlowForm({ ...flowForm, amount: e.target.value })} /></div><div className="field"><label>Data</label><input type="date" value={flowForm.move_date} onChange={e => setFlowForm({ ...flowForm, move_date: e.target.value })} /></div></div>
+              <div className="field"><label>Data do movimento {flowForm.kind === 'out' ? '(data da retirada)' : '(data do aporte)'}</label><input type="date" value={flowForm.move_date} onChange={e => setFlowForm({ ...flowForm, move_date: e.target.value })} /></div>
+              <div className="field"><label>Valor R$</label><input inputMode="decimal" value={flowForm.amount} onChange={e => setFlowForm({ ...flowForm, amount: e.target.value })} /></div>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>A data entra no cálculo do tempo decorrido e do XIRR. Valores sempre em R$ (o botão US$ é só pra visualização).</p>
               <div className="grid2" style={{ marginTop: 16 }}>{flowForm.id && <button className="btn ghost danger" onClick={() => delFlow(flowForm.id)}>Excluir</button>}<button className="btn ghost" onClick={() => setFlowForm(null)}>Cancelar</button><button className="btn" onClick={saveFlow}>Salvar</button></div>
             </div>
           </div>
