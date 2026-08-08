@@ -12,6 +12,8 @@ type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | '
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
+// Formata "YYYY-MM-DD" -> "DD/MM/YYYY" sem objeto Date (evita bug de fuso mostrando 1 dia antes)
+const dBR = (iso: string) => { const p = String(iso || '').slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso || '') }
 
 // XIRR — retorno anualizado ponderado pelo dinheiro e pelas datas reais dos aportes/retiradas.
 // cfs: aporte = valor NEGATIVO (saiu do bolso), retirada/valor atual = POSITIVO. Resolve por bisseção.
@@ -78,6 +80,14 @@ export default function DashboardApp({
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
   const [curr, setCurr] = useState<'BRL' | 'USD'>('BRL')
+  const [top50, setTop50] = useState<any[] | null>(null)
+  const [top50Loading, setTop50Loading] = useState(false)
+  useEffect(() => {
+    if (tab === 'cotacao' && top50 === null && !top50Loading) {
+      setTop50Loading(true)
+      fetch('/api/top').then(r => r.json()).then(d => setTop50(d.coins || [])).catch(() => setTop50([])).finally(() => setTop50Loading(false))
+    }
+  }, [tab, top50, top50Loading])
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
@@ -604,7 +614,7 @@ export default function DashboardApp({
             {priced.filter(h => h.kind === 'crypto' && h.cg_id).sort((a, b) => valOf(b) - valOf(a)).map(h => { const L = live[h.cg_id]; return (
               <div className="qrow" key={h.id}>
                 <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}</div>
-                <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▲ COMPRA' : signals[h.cg_id].verdict.tone === 'sell' ? '▼ VENDA' : '● CAUTELA'}</span>)}</div>
+                <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, marginLeft: 8, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▲ COMPRA' : signals[h.cg_id].verdict.tone === 'sell' ? '▼ VENDA' : '● CAUTELA'}</span>)}</div>
                 <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
               </div>) })}
             {priced.filter(h => h.kind === 'stock').length > 0 && <>
@@ -621,6 +631,16 @@ export default function DashboardApp({
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#158f6f)' }}>USD</div><div className="qname"><b>Dólar</b><span>USD / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#26A17B,#0f6b4f)' }}>USDT</div><div className="qname"><b>Tether</b><span>USDT / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.tether)}</div></div></div>
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2775CA,#164a80)' }}>USDC</div><div className="qname"><b>USD Coin</b><span>USDC / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.usdc)}</div></div></div>
+
+            <div className="qsection">Top 50 · market cap</div>
+            {top50Loading && <p className="foot-note">Carregando top 50…</p>}
+            {top50 && top50.map((c: any) => (
+              <div className="qrow" key={c.id}>
+                <div className="qsym" style={{ background: '#1a1226' }}>{c.img ? <img src={c.img} alt="" /> : c.symbol.slice(0, 3)}</div>
+                <div className="qname"><b><span style={{ color: 'var(--faint)', fontFamily: "'JetBrains Mono'", fontSize: 12 }}>{c.rank}. </span>{c.name}</b><span>{c.symbol}</span></div>
+                <div className="qprice"><div className="p">{usd(c.usd)}</div><div className="qchg" style={{ color: chColor(c.ch24) }}>{chTxt(c.ch24)} 24h</div></div>
+              </div>
+            ))}
           </section>
 
           {/* POOLS */}
@@ -687,8 +707,8 @@ export default function DashboardApp({
               <div className="pw-toggle" style={{ marginTop: 2 }}>
                 <button className={!passiveOnly && !watchOnly ? 'on' : ''} onClick={() => { setPassiveOnly(false); setWatchOnly(false) }}>Todas</button>
                 <button className={passiveOnly ? 'on' : ''} onClick={() => { setPassiveOnly(true); setWatchOnly(false) }}>🛡 Passivas</button>
-                <button className={watchOnly ? 'on' : ''} onClick={() => { setWatchOnly(true); setPassiveOnly(false) }}>⭐ Vigiando{watch.length ? ` ${watch.length}` : ''}</button>
               </div>
+              <button className={watchOnly ? 'netchip on' : 'netchip'} style={{ marginTop: 8 }} onClick={() => { setWatchOnly(v => !v); setPassiveOnly(false) }}>⭐ Vigiando{watch.length ? ` (${watch.length})` : ''}</button>
               {ideasLoading && <p className="foot-note">Buscando pares…</p>}
               {!ideasLoading && ideas && shown.map((it: any, i: number) => {
                 const net = it.netApr
@@ -812,7 +832,7 @@ export default function DashboardApp({
               {flows.slice().sort((a, b) => fdate(b).localeCompare(fdate(a))).map(f => { const d = daysSince(fdate(f)); return (
                 <div className="flow-item" key={f.id} onClick={() => openFlow(f)} style={{ cursor: 'pointer' }}>
                   <div className={`flow-ic ${f.kind === 'in' ? 'flow-in' : 'flow-out'}`}>{f.kind === 'in' ? '↓' : '↑'}</div>
-                  <div className="flow-t"><b>{f.kind === 'in' ? 'Aporte' : 'Retirada'}</b><span>{new Date(fdate(f)).toLocaleDateString('pt-BR')} · há {d}d · {fmt(d / 365.25, 1)}a</span></div>
+                  <div className="flow-t"><b>{f.kind === 'in' ? 'Aporte' : 'Retirada'}</b><span>{dBR(fdate(f))} · há {d}d · {fmt(d / 365.25, 1)}a</span></div>
                   <div className={`flow-v ${f.kind === 'in' ? 'up' : 'down'}`}>{money(f.amount)}</div>
                 </div>) })}
             </div>}
@@ -964,7 +984,7 @@ export default function DashboardApp({
                   </div>
                   <div className="eyebrow" style={{ marginTop: 18 }}>Compras ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
-                    <div className="txhead"><span>{new Date(x.buy_date).toLocaleDateString('pt-BR')} · {daysSince(x.buy_date)}d</span><b>{fmt(x.qty, x.qty < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
+                    <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d</span><b>{fmt(x.qty, x.qty < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
                     <div className="txmeta"><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
                   </div>))}
                   <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
@@ -1032,7 +1052,7 @@ export default function DashboardApp({
                 <div className="modal-preview" style={{ display: 'block' }}>
                   <div>Detectados: <b style={{ color: 'var(--green)' }}>{nIn.length} aportes</b> ({brl(sumIn)}) · <b style={{ color: 'var(--red)' }}>{nOut.length} retiradas</b> ({brl(sumOut)})</div>
                   {bad > 0 && <div style={{ color: '#F5A623', marginTop: 4 }}>{bad} linha(s) sem data/valor reconhecível — serão ignoradas.</div>}
-                  {rows.length > 0 && <div style={{ color: 'var(--muted)', marginTop: 6, fontSize: 12 }}>1º: {rows[0].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[0].amount)} em {new Date(rows[0].date).toLocaleDateString('pt-BR')} · último: {rows[rows.length - 1].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[rows.length - 1].amount)} em {new Date(rows[rows.length - 1].date).toLocaleDateString('pt-BR')}</div>}
+                  {rows.length > 0 && <div style={{ color: 'var(--muted)', marginTop: 6, fontSize: 12 }}>1º: {rows[0].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[0].amount)} em {dBR(rows[0].date)} · último: {rows[rows.length - 1].kind === 'in' ? 'Aporte' : 'Retirada'} {brl(rows[rows.length - 1].amount)} em {dBR(rows[rows.length - 1].date)}</div>}
                 </div>
                 <label className="as-accept" style={{ marginTop: 12 }}><input type="checkbox" checked={!!importer.replace} onChange={e => setImporter({ ...importer, replace: e.target.checked })} /><span>Substituir tudo — apaga os {flows.length} movimentos atuais antes de importar (use se estiver recadastrando o histórico).</span></label>
                 <div style={{ marginTop: 16, display: 'flex', gap: 9 }}>
