@@ -115,6 +115,7 @@ export type Pool = {
   low_range: number; high_range: number
   entry_date: string; fees: number
   pool_address?: string; network?: string
+  position_id?: string   // NFT ID da posição (p/ sincronizar saldo e taxas automaticamente)
 }
 export const DEFAULT_POOL: Omit<Pool, 'id' | 'user_id'> = {
   par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base',
