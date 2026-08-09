@@ -82,6 +82,8 @@ export type Transaction = {
   stop_limit: number
   target: number
   meta_pct: number
+  move_kind?: 'buy' | 'to_pool' | 'from_pool'
+  note?: string
 }
 
 export type Live = { usd: number; ch24: number | null; ch30: number | null; ch1y: number | null; img?: string }
