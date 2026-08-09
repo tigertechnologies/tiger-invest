@@ -144,45 +144,45 @@ export async function GET(request: Request) {
     if (!poolRes || poolRes === '0x') return NextResponse.json({ error: 'pool not found' }, { status: 404 })
     const pool = addrFromWord(poolRes, 0)
 
-    // slot0 (sqrtPrice + tick atual), feeGrowthGlobal, e ticks(lower/upper)
-    const [slot0, fg0Res, fg1Res, tickLowerRes, tickUpperRes] = await Promise.all([
-      rpcCall(rpc, pool, SEL_SLOT0),
-      rpcCall(rpc, pool, SEL_FG0),
-      rpcCall(rpc, pool, SEL_FG1),
-      rpcCall(rpc, pool, SEL_TICKS + u24(tickLower)),
-      rpcCall(rpc, pool, SEL_TICKS + u24(tickUpper)),
-    ])
-    if (!slot0 || !fg0Res || !fg1Res || !tickLowerRes || !tickUpperRes) {
-      return NextResponse.json({ error: 'leitura on-chain incompleta' }, { status: 502 })
-    }
+    // ESSENCIAL: slot0 (preço + tick). Se isso falhar, tentamos de novo 1x antes de desistir.
+    let slot0 = await rpcCall(rpc, pool, SEL_SLOT0)
+    if (!slot0 || slot0 === '0x') { await new Promise(r => setTimeout(r, 400)); slot0 = await rpcCall(rpc, pool, SEL_SLOT0) }
+    if (!slot0 || slot0 === '0x') return NextResponse.json({ error: 'slot0 falhou' }, { status: 502 })
 
     const sqrtP = Number(word(slot0, 0))
     const tickCurrent = Number(wordSigned(slot0, 1))
-    const fgGlobal0 = word(fg0Res, 0)
-    const fgGlobal1 = word(fg1Res, 0)
 
-    // ticks(): retorna (liquidityGross, liquidityNet, feeGrowthOutside0X128, feeGrowthOutside1X128, ...)
-    // índices: 0 gross, 1 net, 2 fgOutside0, 3 fgOutside1
-    const fgOut0Lower = word(tickLowerRes, 2)
-    const fgOut1Lower = word(tickLowerRes, 3)
-    const fgOut0Upper = word(tickUpperRes, 2)
-    const fgOut1Upper = word(tickUpperRes, 3)
-
-    // feeGrowthInside atual
-    const fgInside0 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal0, fgOut0Lower, fgOut0Upper)
-    const fgInside1 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal1, fgOut1Lower, fgOut1Upper)
-
-    // taxas pendentes = liquidity * (fgInside - fgInsideLast) / 2^128  + owed
-    const pending0 = (liquidity * subMod(fgInside0, fgInside0Last)) / Q128
-    const pending1 = (liquidity * subMod(fgInside1, fgInside1Last)) / Q128
-    const totalFee0 = pending0 + owed0
-    const totalFee1 = pending1 + owed1
+    // OPCIONAL: leituras de taxa (feeGrowth + ticks). Se falharem, seguimos sem as taxas
+    // pendentes — o saldo e o range continuam funcionando. Chamadas sequenciais (RPC público
+    // costuma recusar muitas paralelas).
+    let fees: number | null = null
+    try {
+      const fg0Res = await rpcCall(rpc, pool, SEL_FG0)
+      const fg1Res = await rpcCall(rpc, pool, SEL_FG1)
+      const tickLowerRes = await rpcCall(rpc, pool, SEL_TICKS + u24(tickLower))
+      const tickUpperRes = await rpcCall(rpc, pool, SEL_TICKS + u24(tickUpper))
+      if (fg0Res && fg1Res && tickLowerRes && tickUpperRes) {
+        const fgGlobal0 = word(fg0Res, 0)
+        const fgGlobal1 = word(fg1Res, 0)
+        const fgOut0Lower = word(tickLowerRes, 2)
+        const fgOut1Lower = word(tickLowerRes, 3)
+        const fgOut0Upper = word(tickUpperRes, 2)
+        const fgOut1Upper = word(tickUpperRes, 3)
+        const fgInside0 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal0, fgOut0Lower, fgOut0Upper)
+        const fgInside1 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal1, fgOut1Lower, fgOut1Upper)
+        const pending0 = (liquidity * subMod(fgInside0, fgInside0Last)) / Q128
+        const pending1 = (liquidity * subMod(fgInside1, fgInside1Last)) / Q128
+        const totalFee0 = pending0 + owed0
+        const totalFee1 = pending1 + owed1
+        const pxF = await usdPrices([t0.cg, t1.cg], u.origin)
+        const f0 = Number(totalFee0) / 10 ** t0.decimals
+        const f1 = Number(totalFee1) / 10 ** t1.decimals
+        fees = f0 * (pxF[t0.cg] || 0) + f1 * (pxF[t1.cg] || 0)
+      }
+    } catch { fees = null }
 
     const origin = u.origin
     const px = await usdPrices([t0.cg, t1.cg], origin)
-    const f0 = Number(totalFee0) / 10 ** t0.decimals
-    const f1 = Number(totalFee1) / 10 ** t1.decimals
-    const fees = f0 * (px[t0.cg] || 0) + f1 * (px[t1.cg] || 0)
 
     // valor atual da posição
     let current_value: number | null = null
@@ -200,7 +200,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      fees: Math.round(fees * 100000) / 100000,
+      fees: fees != null ? Math.round(fees * 100000) / 100000 : null,
       current_value: current_value != null ? Math.round(current_value * 100) / 100 : null,
       token0: t0.symbol, token1: t1.symbol,
       ratio_t1_per_t0, ratio_t0_per_t1,
