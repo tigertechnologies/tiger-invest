@@ -88,6 +88,7 @@ export default function DashboardApp({
       fetch('/api/top').then(r => r.json()).then(d => setTop50(d.coins || [])).catch(() => setTop50([])).finally(() => setTop50Loading(false))
     }
   }, [tab, top50, top50Loading])
+  const [syncing, setSyncing] = useState<string | null>(null)
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
@@ -448,7 +449,7 @@ export default function DashboardApp({
   }
   async function savePool() {
     const f = poolForm; if (!f) return
-    const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, fees: num(f.fees), pool_address: f.pool_address || '', network: f.network || 'base' }
+    const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, fees: num(f.fees), pool_address: f.pool_address || '', network: f.network || 'base', position_id: f.position_id || '' }
     if (f.id) await supabase.from('pools').update(payload).eq('id', f.id)
     else await supabase.from('pools').insert(payload)
     setPoolForm(null); await refetch()
@@ -536,7 +537,22 @@ export default function DashboardApp({
     setRadarSigLoading(false)
   }
   const openFlow = (f: Flow | null) => setFlowForm(f ? { id: f.id, kind: f.kind, amount: f.amount, move_date: f.move_date || (f.created_at ? f.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)) } : { kind: 'in', amount: '', move_date: new Date().toISOString().slice(0, 10) })
-  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '', pool_address: '', network: 'base' })
+  // Sincroniza saldo atual + taxas da posição direto da blockchain (via NFT ID)
+  async function syncPosition(p: Pool) {
+    if (!p.id) return
+    if (!p.position_id) { alert('Cadastre o NFT ID da posição (campo "ID da posição") para sincronizar automaticamente.'); return }
+    setSyncing(p.id)
+    try {
+      const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
+      const d = await r.json()
+      if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
+      await supabase.from('pools').update({ current_value: d.current_value, fees: d.fees }).eq('id', p.id)
+      await refetch()
+    } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
+    finally { setSyncing(null) }
+  }
+
+  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '', pool_address: '', network: 'base', position_id: '' })
 
   const assetRow = (h: Holding) => {
     const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
@@ -680,7 +696,7 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
                 </div>
-                <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>
+                <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>{p.position_id ? <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} disabled={syncing === p.id} onClick={() => syncPosition(p)}>{syncing === p.id ? 'Sincronizando…' : '🔄 Sincronizar saldo e taxas'}</button> : null}
               </div>)
             })}
             <button className="addbtn" onClick={() => openPool(null)}>+ nova pool</button>
@@ -1025,6 +1041,7 @@ export default function DashboardApp({
               <div className="grid2"><div className="field"><label>Aporte U$</label><input inputMode="decimal" value={poolForm.aporte} onChange={e => setPoolForm({ ...poolForm, aporte: e.target.value })} /></div><div className="field"><label>Saldo atual U$</label><input inputMode="decimal" value={poolForm.current_value} onChange={e => setPoolForm({ ...poolForm, current_value: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Taxas geradas U$</label><input inputMode="decimal" value={poolForm.fees} onChange={e => setPoolForm({ ...poolForm, fees: e.target.value })} /></div><div className="field"><label>Link da pool</label><input value={poolForm.link} onChange={e => setPoolForm({ ...poolForm, link: e.target.value })} placeholder="https://..." /></div></div>
               <div className="grid2"><div className="field"><label>Rede (p/ estatísticas)</label><input value={poolForm.network || 'base'} onChange={e => setPoolForm({ ...poolForm, network: e.target.value })} placeholder="base" /></div><div className="field"><label>Endereço da pool (tração)</label><input value={poolForm.pool_address || ''} onChange={e => setPoolForm({ ...poolForm, pool_address: e.target.value })} placeholder="0x... (opcional)" /></div></div>
+              <div className="grid2"><div className="field"><label>ID da posição (p/ sincronizar taxas)</label><input value={poolForm.position_id || ''} onChange={e => setPoolForm({ ...poolForm, position_id: e.target.value })} placeholder="ex: 3831528 (NFT ID)" /></div><div className="field" /></div>
               <div className="grid2" style={{ marginTop: 16 }}>{poolForm.id && <button className="btn ghost danger" onClick={() => delPool(poolForm.id)}>Excluir</button>}<button className="btn ghost" onClick={() => setPoolForm(null)}>Cancelar</button><button className="btn" onClick={savePool}>Salvar</button></div>
             </div></div>
           </div>
