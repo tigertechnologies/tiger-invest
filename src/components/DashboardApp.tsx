@@ -89,6 +89,7 @@ export default function DashboardApp({
     }
   }, [tab, top50, top50Loading])
   const [syncing, setSyncing] = useState<string | null>(null)
+  const [poolRatio, setPoolRatio] = useState<Record<string, number>>({})
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
@@ -547,11 +548,37 @@ export default function DashboardApp({
       const d = await r.json()
       if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
       await supabase.from('pools').update({ fees: d.fees }).eq('id', p.id)
+      // escolhe automaticamente o ratio (cbBTC/WETH ou WETH/cbBTC) que cai dentro do range cadastrado
+      const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0) as number[]
+      const lo = p.low_range || 0, hi = p.high_range || 0
+      let chosen = cands[0]
+      if (lo > 0 && hi > 0) {
+        const inside = cands.find(r => r >= lo * 0.5 && r <= hi * 1.5)
+        if (inside) chosen = inside
+      }
+      if (chosen && p.id) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
       await refetch()
-      alert(`Taxas sincronizadas: ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})`)
+      alert(`Taxas sincronizadas: ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})${chosen ? ' · preço ' + chosen.toFixed(4) : ''}`)
     } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
     finally { setSyncing(null) }
   }
+
+  // ao carregar, busca o preço on-chain das pools que têm NFT ID (atualiza status de range sem clique)
+  useEffect(() => {
+    pools.forEach(p => {
+      if (p.position_id && p.id && !poolRatio[p.id]) {
+        fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`).then(r => r.json()).then(d => {
+          if (!d?.ok) return
+          const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0)
+          const lo = p.low_range || 0, hi = p.high_range || 0
+          let chosen = cands[0]
+          if (lo > 0 && hi > 0) { const ins = cands.find((r: number) => r >= lo * 0.5 && r <= hi * 1.5); if (ins) chosen = ins }
+          if (chosen) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
+        }).catch(() => {})
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pools])
 
   const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '', pool_address: '', network: 'base', position_id: '' })
 
@@ -664,7 +691,7 @@ export default function DashboardApp({
           <section className={`screen ${tab === 'pools' ? 'active' : ''}`}>
             <div className="eyebrow">Minhas pools de liquidez</div>
             {pools.map(p => {
-              const price = live[p.par1_cg_id]?.usd ?? 0
+              const price = (p.id && poolRatio[p.id]) ? poolRatio[p.id] : (live[p.par1_cg_id]?.usd ?? 0)
               const below = price > 0 && p.low_range > 0 && price < p.low_range
               const above = price > 0 && p.high_range > 0 && price > p.high_range
               const inRange = price > 0 && !below && !above && p.low_range > 0
