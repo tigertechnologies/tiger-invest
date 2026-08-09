@@ -573,7 +573,7 @@ export default function DashboardApp({
       const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
       const d = await r.json()
       if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
-      await supabase.from('pools').update({ fees: d.fees }).eq('id', p.id)
+      await supabase.from('pools').update({ fees: d.fees, ...(d.current_value != null ? { current_value: d.current_value } : {}) }).eq('id', p.id)
       // escolhe automaticamente o ratio (cbBTC/WETH ou WETH/cbBTC) que cai dentro do range cadastrado
       const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0) as number[]
       const lo = p.low_range || 0, hi = p.high_range || 0
@@ -584,7 +584,7 @@ export default function DashboardApp({
       }
       if (chosen && p.id) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
       await refetch()
-      alert(`Taxas sincronizadas: ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})${chosen ? ' · preço ' + chosen.toFixed(4) : ''}`)
+      alert(`Sincronizado: saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})`)
     } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
     finally { setSyncing(null) }
   }
@@ -593,13 +593,18 @@ export default function DashboardApp({
   useEffect(() => {
     pools.forEach(p => {
       if (p.position_id && p.id && !poolRatio[p.id]) {
-        fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`).then(r => r.json()).then(d => {
+        fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`).then(r => r.json()).then(async d => {
           if (!d?.ok) return
           const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0)
           const lo = p.low_range || 0, hi = p.high_range || 0
           let chosen = cands[0]
           if (lo > 0 && hi > 0) { const ins = cands.find((r: number) => r >= lo * 0.5 && r <= hi * 1.5); if (ins) chosen = ins }
           if (chosen) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
+          // grava saldo + taxas automaticamente se mudaram (evita write desnecessário)
+          const upd: any = {}
+          if (d.fees != null && Math.abs((d.fees || 0) - (p.fees || 0)) > 0.005) upd.fees = d.fees
+          if (d.current_value != null && Math.abs((d.current_value || 0) - (p.current_value || 0)) > 0.01) upd.current_value = d.current_value
+          if (Object.keys(upd).length && p.id) { await supabase.from('pools').update(upd).eq('id', p.id); refetch() }
         }).catch(() => {})
       }
     })
