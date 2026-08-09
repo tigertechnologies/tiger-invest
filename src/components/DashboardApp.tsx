@@ -77,6 +77,7 @@ export default function DashboardApp({
   const [cashInput, setCashInput] = useState('')
   const [assetEdit, setAssetEdit] = useState<any | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
+  const [moveForm, setMoveForm] = useState<any | null>(null)
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
   const [curr, setCurr] = useState<'BRL' | 'USD'>('BRL')
@@ -374,7 +375,11 @@ export default function DashboardApp({
     const { data } = await supabase.from('transactions').select('*').eq('symbol', symbol)
     const list = (data || []) as Transaction[]
     if (list.length === 0) { await supabase.from('holdings').delete().eq('symbol', symbol).eq('kind', 'crypto'); return }
-    const qty = list.reduce((s, x) => s + x.qty, 0), invested = list.reduce((s, x) => s + x.qty * x.buy_price, 0)
+    // qty final = compras + retornos - saidas (todos somam via sinal da qty).
+    // invested (custo) considera SOMENTE compras reais, para nao distorcer o custo medio
+    // quando o ativo apenas se move para/da pool (movimento interno, nao e compra/venda).
+    const qty = list.reduce((s, x) => s + x.qty, 0)
+    const invested = list.filter(x => (x.move_kind || 'buy') === 'buy').reduce((s, x) => s + x.qty * x.buy_price, 0)
     const existing = holdings.find(h => h.symbol === symbol && h.kind === 'crypto')
     const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: existing?.price ?? (qty ? invested / qty : 0), invested, current_value: null, sort: existing?.sort ?? 50 }
     if (existing?.id) await supabase.from('holdings').update(payload).eq('id', existing.id)
@@ -388,6 +393,27 @@ export default function DashboardApp({
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, payload.meta_pct)
     setTxForm(null); setDetail(null); await refetch()
   }
+  const openMove = (h: Holding, dir: 'to_pool' | 'from_pool') => setMoveForm({
+    symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color,
+    dir, qty: '', price: String(live[h.cg_id]?.usd ?? h.price ?? ''), note: '',
+    buy_date: new Date().toISOString().slice(0, 10),
+  })
+  async function saveMove() {
+    const f = moveForm; if (!f) return
+    const q = num(f.qty); if (!q) { setMoveForm(null); return }
+    // saida -> qty negativa; retorno -> qty positiva
+    const signedQty = f.dir === 'to_pool' ? -Math.abs(q) : Math.abs(q)
+    const payload: any = {
+      user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name, cg_id: f.cg_id, color: f.color || '#A855F7',
+      rede: '', corretora: '', carteira: '', buy_date: f.buy_date,
+      qty: signedQty, buy_price: num(f.price), stop_limit: 0, target: 0, meta_pct: 0,
+      move_kind: f.dir, note: f.note || (f.dir === 'to_pool' ? 'saída para pool' : 'retorno de pool'),
+    }
+    await supabase.from('transactions').insert(payload)
+    await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, 0)
+    setMoveForm(null); setDetail(null); await refetch()
+  }
+
   async function delTx(id: string, h: Holding) { await supabase.from('transactions').delete().eq('id', id); await recompute(h.symbol, h.name, h.cg_id, h.color, h.meta_pct); await refetch() }
   async function delAsset(h: Holding) { await supabase.from('transactions').delete().eq('symbol', h.symbol); if (h.id) await supabase.from('holdings').delete().eq('id', h.id); setDetail(null); await refetch() }
   async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: num(cashInput) }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
@@ -1026,17 +1052,37 @@ export default function DashboardApp({
                     <div className="dcell"><div className="k">Rede</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.rede))}</div></div>
                     <div className="dcell"><div className="k">Corretora</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.corretora))}</div></div>
                   </div>
-                  <div className="eyebrow" style={{ marginTop: 18 }}>Compras ({my.length})</div>
+                  <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
-                    <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d</span><b>{fmt(x.qty, x.qty < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
-                    <div className="txmeta"><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
+                    <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
+                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">valor <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
                   </div>))}
-                  <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
+                  <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => openMove(h, 'to_pool')}>↗ Saída p/ pool</button><button className="btn ghost" onClick={() => openMove(h, 'from_pool')}>↙ Retorno de pool</button></div><div className="grid2" style={{ marginTop: 8 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
                 </div>
               </div>
             </div>
           )
         })()}
+
+        {/* FORM DE MOVIMENTO (saída/retorno de pool) */}
+        {moveForm && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setMoveForm(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{moveForm.dir === 'to_pool' ? `↗ Saída de ${moveForm.symbol} para pool` : `↙ Retorno de ${moveForm.symbol} da pool`}</h3>
+              <p className="foot-note" style={{ marginTop: 4 }}>{moveForm.dir === 'to_pool' ? 'Registra a saída do ativo para uma pool. O saldo diminui, sem alterar seu custo médio.' : 'Registra o retorno do ativo quando você desmonta a pool. O saldo aumenta, sem alterar seu custo médio.'}</p>
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <div className="field"><label>Quantidade</label><input inputMode="decimal" value={moveForm.qty} onChange={e => setMoveForm({ ...moveForm, qty: e.target.value })} placeholder="ex: 1.04" /></div>
+                <div className="field"><label>Preço U$ no momento</label><input inputMode="decimal" value={moveForm.price} onChange={e => setMoveForm({ ...moveForm, price: e.target.value })} placeholder="ex: 1917" /></div>
+              </div>
+              <div className="grid2">
+                <div className="field"><label>Data</label><input type="date" value={moveForm.buy_date} onChange={e => setMoveForm({ ...moveForm, buy_date: e.target.value })} /></div>
+                <div className="field"><label>Nota (livre)</label><input value={moveForm.note} onChange={e => setMoveForm({ ...moveForm, note: e.target.value })} placeholder="ex: pool cbBTC/WETH 0,05%" /></div>
+              </div>
+              <div className="modal-preview"><span>{moveForm.dir === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo'}</span><b className="num">{fmt(num(moveForm.qty), num(moveForm.qty) < 1 ? 5 : 3)} {moveForm.symbol} · {usd(num(moveForm.qty) * num(moveForm.price))}</b></div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setMoveForm(null)}>Cancelar</button><button className="btn" onClick={saveMove}>Salvar movimento</button></div>
+            </div></div>
+          </div>
+        )}
 
         {/* FORM DE COMPRA */}
         {txForm && (
