@@ -602,7 +602,7 @@ export default function DashboardApp({
           if (chosen) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
           // grava saldo + taxas automaticamente se mudaram (evita write desnecessário)
           const upd: any = {}
-          if (d.fees != null && Math.abs((d.fees || 0) - (p.fees || 0)) > 0.005) upd.fees = d.fees
+          if (d.fees != null && Math.abs((d.fees || 0) - (p.fees || 0)) > 0.00001) upd.fees = d.fees
           if (d.current_value != null && Math.abs((d.current_value || 0) - (p.current_value || 0)) > 0.01) upd.current_value = d.current_value
           if (Object.keys(upd).length && p.id) { await supabase.from('pools').update(upd).eq('id', p.id); refetch() }
         }).catch(() => {})
@@ -751,7 +751,7 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">Aporte</span><span className="v num">{usd(p.aporte)}</span></div>
                   <div className="kv"><span className="k">Saldo atual</span><span className="v num">{usd(p.current_value)}</span></div>
                   <div className="kv"><span className="k">PNL</span><span className={`v num ${pnl >= 0 ? 'up' : 'down'}`}>{(pnl >= 0 ? '+' : '-') + usd(Math.abs(pnl)).slice(1)}</span></div>
-                  <div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{usd(p.fees)}</span></div>
+                  <div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{'$' + (Math.abs(p.fees || 0) > 0 && Math.abs(p.fees || 0) < 1 ? (p.fees || 0).toLocaleString('pt-BR', { minimumFractionDigits: 5, maximumFractionDigits: 5 }) : fmt(p.fees || 0))}</span></div>
                   <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
                 </div>
