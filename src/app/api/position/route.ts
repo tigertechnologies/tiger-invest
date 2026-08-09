@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server'
 
 // Tiger Invest — Sincronização de posição Uniswap V3 (por NFT ID)
 // SEM subgraph e SEM API key: lê direto dos contratos via RPC público.
-// Retorna: taxas não coletadas (US$), preço da razão (p/ status de range)
-// e o VALOR ATUAL da posição em US$ (amount0/amount1 calculados via liquidez).
+// Retorna: taxas TOTAIS não coletadas (pendentes + materializadas) em US$,
+// valor atual da posição (US$) e a razão de preço (p/ status de range).
 //
 // GET /api/position?network=base&id=5748476
 
@@ -23,9 +23,12 @@ const FACTORY: Record<string, string> = {
   arbitrum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
 }
 
-const SEL_POSITIONS = '0x99fbab88' // positions(uint256)
-const SEL_GETPOOL   = '0x1698ee82' // getPool(address,address,uint24)
-const SEL_SLOT0     = '0x3850c7bd' // slot0()
+const SEL_POSITIONS  = '0x99fbab88' // positions(uint256)
+const SEL_GETPOOL    = '0x1698ee82' // getPool(address,address,uint24)
+const SEL_SLOT0      = '0x3850c7bd' // slot0()
+const SEL_FG0        = '0xf3058399' // feeGrowthGlobal0X128()
+const SEL_FG1        = '0x46141319' // feeGrowthGlobal1X128()
+const SEL_TICKS      = '0xf30dba93' // ticks(int24)
 
 const TOKENS: Record<string, { symbol: string; decimals: number; cg: string }> = {
   '0x4200000000000000000000000000000000000006': { symbol: 'WETH', decimals: 18, cg: 'ethereum' },
@@ -33,6 +36,9 @@ const TOKENS: Record<string, { symbol: string; decimals: number; cg: string }> =
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6, cg: 'usd-coin' },
   '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': { symbol: 'USDT', decimals: 6, cg: 'tether' },
 }
+
+const Q128 = 1n << 128n
+const Q256 = 1n << 256n
 
 async function rpcCall(rpc: string, to: string, data: string): Promise<string | null> {
   try {
@@ -52,18 +58,25 @@ function word(hex: string, i: number): bigint {
   const s = c.slice(i * 64, i * 64 + 64)
   return s ? BigInt('0x' + s) : 0n
 }
-// lê int24/int com sinal a partir de um word (para ticks)
 function wordSigned(hex: string, i: number): bigint {
-  const v = word(hex, i)
-  const max = 1n << 255n
-  return v >= max ? v - (1n << 256n) : v
+  const v = word(hex, i); const max = 1n << 255n
+  return v >= max ? v - Q256 : v
 }
 function addrFromWord(hex: string, i: number): string {
   const c = hex.replace(/^0x/, '')
   return ('0x' + c.slice(i * 64, i * 64 + 64).slice(24)).toLowerCase()
 }
 function pad(a: string): string { return a.replace(/^0x/, '').toLowerCase().padStart(64, '0') }
-function feeHex(fee: number): string { return fee.toString(16).padStart(64, '0') }
+function u24(n: number): string {
+  // int24 em complemento de dois, empacotado em 32 bytes
+  const v = n < 0 ? (Q256 + BigInt(n)) : BigInt(n)
+  return v.toString(16).padStart(64, '0')
+}
+// subtração modular em 256 bits (feeGrowth "wraps around" de propósito)
+function subMod(a: bigint, b: bigint): bigint {
+  const r = (a - b) % Q256
+  return r < 0n ? r + Q256 : r
+}
 
 async function usdPrices(cgIds: string[], origin: string): Promise<Record<string, number>> {
   const ids = Array.from(new Set(cgIds)).filter(Boolean)
@@ -78,23 +91,26 @@ async function usdPrices(cgIds: string[], origin: string): Promise<Record<string
   } catch { return {} }
 }
 
-// sqrt(1.0001^tick) * 2^96  — via Math (precisão suficiente p/ tracker)
-function sqrtPriceX96FromTick(tick: number): number {
-  return Math.sqrt(Math.pow(1.0001, tick)) * 2 ** 96
+function sqrtPriceX96FromTick(tick: number): number { return Math.sqrt(Math.pow(1.0001, tick)) * 2 ** 96 }
+function amountsFromLiquidity(L: number, sqrtP: number, sqrtA: number, sqrtB: number) {
+  const Q96 = 2 ** 96; let a0 = 0, a1 = 0
+  if (sqrtP <= sqrtA) { a0 = L * (sqrtB - sqrtA) / (sqrtA * sqrtB / Q96) }
+  else if (sqrtP < sqrtB) { a0 = L * (sqrtB - sqrtP) / (sqrtP * sqrtB / Q96); a1 = L * (sqrtP - sqrtA) / Q96 }
+  else { a1 = L * (sqrtB - sqrtA) / Q96 }
+  return { a0, a1 }
 }
-// quantidades de token0/token1 de uma posição concentrada (fórmulas oficiais Uniswap V3)
-function amountsFromLiquidity(liquidity: number, sqrtP: number, sqrtA: number, sqrtB: number): { amount0: number; amount1: number } {
-  const Q96 = 2 ** 96
-  let amount0 = 0, amount1 = 0
-  if (sqrtP <= sqrtA) {
-    amount0 = liquidity * (sqrtB - sqrtA) / (sqrtA * sqrtB / Q96)
-  } else if (sqrtP < sqrtB) {
-    amount0 = liquidity * (sqrtB - sqrtP) / (sqrtP * sqrtB / Q96)
-    amount1 = liquidity * (sqrtP - sqrtA) / Q96
-  } else {
-    amount1 = liquidity * (sqrtB - sqrtA) / Q96
-  }
-  return { amount0, amount1 }
+
+// feeGrowthInside para um dos tokens, dada a posição do tick atual
+function feeGrowthInside(
+  tickCurrent: number, tickLower: number, tickUpper: number,
+  fgGlobal: bigint, fgOutsideLower: bigint, fgOutsideUpper: bigint
+): bigint {
+  let below: bigint, above: bigint
+  if (tickCurrent >= tickLower) below = fgOutsideLower
+  else below = subMod(fgGlobal, fgOutsideLower)
+  if (tickCurrent < tickUpper) above = fgOutsideUpper
+  else above = subMod(fgGlobal, fgOutsideUpper)
+  return subMod(subMod(fgGlobal, below), above)
 }
 
 export async function GET(request: Request) {
@@ -114,54 +130,81 @@ export async function GET(request: Request) {
     const fee = Number(word(posRes, 4))
     const tickLower = Number(wordSigned(posRes, 5))
     const tickUpper = Number(wordSigned(posRes, 6))
-    const liquidity = Number(word(posRes, 7))
+    const liquidity = word(posRes, 7)
+    const fgInside0Last = word(posRes, 8)
+    const fgInside1Last = word(posRes, 9)
     const owed0 = word(posRes, 10)
     const owed1 = word(posRes, 11)
 
     const t0 = TOKENS[token0], t1 = TOKENS[token1]
     if (!t0 || !t1) return NextResponse.json({ error: 'token desconhecido', token0, token1 }, { status: 422 })
 
-    // pool + slot0 (sqrtPriceX96 atual)
-    let sqrtP = 0, ratio_t1_per_t0: number | null = null
-    const poolRes = await rpcCall(rpc, factory, SEL_GETPOOL + pad(token0) + pad(token1) + feeHex(fee))
-    if (poolRes && poolRes !== '0x') {
-      const pool = addrFromWord(poolRes, 0)
-      const slot0 = await rpcCall(rpc, pool, SEL_SLOT0)
-      if (slot0 && slot0 !== '0x') {
-        sqrtP = Number(word(slot0, 0))
-        const sp = sqrtP / 2 ** 96
-        ratio_t1_per_t0 = sp * sp * 10 ** t0.decimals / 10 ** t1.decimals
-      }
+    // pool
+    const poolRes = await rpcCall(rpc, factory, SEL_GETPOOL + pad(token0) + pad(token1) + fee.toString(16).padStart(64, '0'))
+    if (!poolRes || poolRes === '0x') return NextResponse.json({ error: 'pool not found' }, { status: 404 })
+    const pool = addrFromWord(poolRes, 0)
+
+    // slot0 (sqrtPrice + tick atual), feeGrowthGlobal, e ticks(lower/upper)
+    const [slot0, fg0Res, fg1Res, tickLowerRes, tickUpperRes] = await Promise.all([
+      rpcCall(rpc, pool, SEL_SLOT0),
+      rpcCall(rpc, pool, SEL_FG0),
+      rpcCall(rpc, pool, SEL_FG1),
+      rpcCall(rpc, pool, SEL_TICKS + u24(tickLower)),
+      rpcCall(rpc, pool, SEL_TICKS + u24(tickUpper)),
+    ])
+    if (!slot0 || !fg0Res || !fg1Res || !tickLowerRes || !tickUpperRes) {
+      return NextResponse.json({ error: 'leitura on-chain incompleta' }, { status: 502 })
     }
+
+    const sqrtP = Number(word(slot0, 0))
+    const tickCurrent = Number(wordSigned(slot0, 1))
+    const fgGlobal0 = word(fg0Res, 0)
+    const fgGlobal1 = word(fg1Res, 0)
+
+    // ticks(): retorna (liquidityGross, liquidityNet, feeGrowthOutside0X128, feeGrowthOutside1X128, ...)
+    // índices: 0 gross, 1 net, 2 fgOutside0, 3 fgOutside1
+    const fgOut0Lower = word(tickLowerRes, 2)
+    const fgOut1Lower = word(tickLowerRes, 3)
+    const fgOut0Upper = word(tickUpperRes, 2)
+    const fgOut1Upper = word(tickUpperRes, 3)
+
+    // feeGrowthInside atual
+    const fgInside0 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal0, fgOut0Lower, fgOut0Upper)
+    const fgInside1 = feeGrowthInside(tickCurrent, tickLower, tickUpper, fgGlobal1, fgOut1Lower, fgOut1Upper)
+
+    // taxas pendentes = liquidity * (fgInside - fgInsideLast) / 2^128  + owed
+    const pending0 = (liquidity * subMod(fgInside0, fgInside0Last)) / Q128
+    const pending1 = (liquidity * subMod(fgInside1, fgInside1Last)) / Q128
+    const totalFee0 = pending0 + owed0
+    const totalFee1 = pending1 + owed1
 
     const origin = u.origin
     const px = await usdPrices([t0.cg, t1.cg], origin)
+    const f0 = Number(totalFee0) / 10 ** t0.decimals
+    const f1 = Number(totalFee1) / 10 ** t1.decimals
+    const fees = f0 * (px[t0.cg] || 0) + f1 * (px[t1.cg] || 0)
 
-    // taxas não coletadas
-    const fee0 = Number(owed0) / 10 ** t0.decimals
-    const fee1 = Number(owed1) / 10 ** t1.decimals
-    const fees = fee0 * (px[t0.cg] || 0) + fee1 * (px[t1.cg] || 0)
-
-    // valor atual da posição (amount0/amount1 dentro do range)
+    // valor atual da posição
     let current_value: number | null = null
-    if (sqrtP > 0 && liquidity > 0) {
+    if (sqrtP > 0 && liquidity > 0n) {
       const sqrtA = sqrtPriceX96FromTick(tickLower)
       const sqrtB = sqrtPriceX96FromTick(tickUpper)
-      const { amount0, amount1 } = amountsFromLiquidity(liquidity, sqrtP, sqrtA, sqrtB)
-      const amt0 = amount0 / 10 ** t0.decimals
-      const amt1 = amount1 / 10 ** t1.decimals
+      const { a0, a1 } = amountsFromLiquidity(Number(liquidity), sqrtP, sqrtA, sqrtB)
+      const amt0 = a0 / 10 ** t0.decimals, amt1 = a1 / 10 ** t1.decimals
       current_value = amt0 * (px[t0.cg] || 0) + amt1 * (px[t1.cg] || 0)
     }
 
-    const ratio_t0_per_t1 = ratio_t1_per_t0 && ratio_t1_per_t0 > 0 ? 1 / ratio_t1_per_t0 : null
+    const sp = sqrtP / 2 ** 96
+    const ratio_t1_per_t0 = sp * sp * 10 ** t0.decimals / 10 ** t1.decimals
+    const ratio_t0_per_t1 = ratio_t1_per_t0 > 0 ? 1 / ratio_t1_per_t0 : null
 
     return NextResponse.json({
       ok: true,
-      fees: Math.round(fees * 100) / 100,
+      fees: Math.round(fees * 100000) / 100000,
       current_value: current_value != null ? Math.round(current_value * 100) / 100 : null,
       token0: t0.symbol, token1: t1.symbol,
       ratio_t1_per_t0, ratio_t0_per_t1,
-      note: 'saldo e taxas calculados on-chain a preco de mercado',
+      note: 'taxas pendentes+materializadas e saldo calculados on-chain',
     })
   } catch {
     return NextResponse.json({ error: 'decode failed' }, { status: 500 })
