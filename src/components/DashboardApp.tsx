@@ -546,8 +546,9 @@ export default function DashboardApp({
       const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
       const d = await r.json()
       if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
-      await supabase.from('pools').update({ current_value: d.current_value, fees: d.fees }).eq('id', p.id)
+      await supabase.from('pools').update({ fees: d.fees }).eq('id', p.id)
       await refetch()
+      alert(`Taxas sincronizadas: ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})`)
     } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
     finally { setSyncing(null) }
   }
@@ -696,7 +697,7 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
                 </div>
-                <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>{p.position_id ? <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} disabled={syncing === p.id} onClick={() => syncPosition(p)}>{syncing === p.id ? 'Sincronizando…' : '🔄 Sincronizar saldo e taxas'}</button> : null}
+                <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>{p.position_id ? <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} disabled={syncing === p.id} onClick={() => syncPosition(p)}>{syncing === p.id ? 'Sincronizando…' : '🔄 Sincronizar taxas'}</button> : null}
               </div>)
             })}
             <button className="addbtn" onClick={() => openPool(null)}>+ nova pool</button>
