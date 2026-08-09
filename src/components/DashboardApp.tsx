@@ -570,9 +570,15 @@ export default function DashboardApp({
     if (!p.position_id) { alert('Cadastre o NFT ID da posição (campo "ID da posição") para sincronizar automaticamente.'); return }
     setSyncing(p.id)
     try {
-      const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
-      const d = await r.json()
-      if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
+      // tenta até 3x (RPC público às vezes recusa a 1ª rajada); só avisa se todas falharem
+      let d: any = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
+        d = await r.json()
+        if (d?.ok) break
+        await new Promise(res => setTimeout(res, 700))
+      }
+      if (!d?.ok) { alert('O RPC não respondeu agora. Tente novamente em alguns segundos.'); return }
       await supabase.from('pools').update({ ...(d.fees != null ? { fees: d.fees } : {}), ...(d.current_value != null ? { current_value: d.current_value } : {}) }).eq('id', p.id)
       // escolhe automaticamente o ratio (cbBTC/WETH ou WETH/cbBTC) que cai dentro do range cadastrado
       const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0) as number[]
