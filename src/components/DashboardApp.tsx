@@ -573,7 +573,7 @@ export default function DashboardApp({
       const r = await fetch(`/api/position?network=${p.network || 'base'}&id=${p.position_id}`)
       const d = await r.json()
       if (!d?.ok) { alert('Não consegui buscar a posição. Confira o NFT ID e a rede.'); return }
-      await supabase.from('pools').update({ fees: d.fees, ...(d.current_value != null ? { current_value: d.current_value } : {}) }).eq('id', p.id)
+      await supabase.from('pools').update({ ...(d.fees != null ? { fees: d.fees } : {}), ...(d.current_value != null ? { current_value: d.current_value } : {}) }).eq('id', p.id)
       // escolhe automaticamente o ratio (cbBTC/WETH ou WETH/cbBTC) que cai dentro do range cadastrado
       const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0) as number[]
       const lo = p.low_range || 0, hi = p.high_range || 0
@@ -584,7 +584,7 @@ export default function DashboardApp({
       }
       if (chosen && p.id) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
       await refetch()
-      alert(`Sincronizado: saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(2) : '—'} (${d.token0}/${d.token1})`)
+      alert(`Sincronizado: saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(5) : 'indisponível agora (RPC)'} (${d.token0}/${d.token1})`)
     } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
     finally { setSyncing(null) }
   }
