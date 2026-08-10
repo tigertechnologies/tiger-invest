@@ -7,10 +7,11 @@ import { NextResponse } from 'next/server'
 //
 // GET /api/position?network=base&id=5748476
 
-const RPC: Record<string, string> = {
-  base: 'https://mainnet.base.org',
-  ethereum: 'https://eth.llamarpc.com',
-  arbitrum: 'https://arb1.arbitrum.io/rpc',
+// Vários RPCs por rede (fallback) — o público único costuma recusar chamadas e travar o sync.
+const RPCS: Record<string, string[]> = {
+  base: ['https://base-rpc.publicnode.com', 'https://base.llamarpc.com', 'https://1rpc.io/base', 'https://mainnet.base.org'],
+  ethereum: ['https://ethereum-rpc.publicnode.com', 'https://eth.llamarpc.com', 'https://1rpc.io/eth'],
+  arbitrum: ['https://arbitrum-one-rpc.publicnode.com', 'https://arb1.arbitrum.io/rpc', 'https://1rpc.io/arb'],
 }
 const NPM: Record<string, string> = {
   base: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
@@ -23,6 +24,7 @@ const FACTORY: Record<string, string> = {
   arbitrum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
 }
 
+const SEL_DECIMALS   = '0x313ce567' // decimals()
 const SEL_POSITIONS  = '0x99fbab88' // positions(uint256)
 const SEL_GETPOOL    = '0x1698ee82' // getPool(address,address,uint24)
 const SEL_SLOT0      = '0x3850c7bd' // slot0()
@@ -40,17 +42,25 @@ const TOKENS: Record<string, { symbol: string; decimals: number; cg: string }> =
 const Q128 = 1n << 128n
 const Q256 = 1n << 256n
 
-async function rpcCall(rpc: string, to: string, data: string): Promise<string | null> {
-  try {
-    const r = await fetch(rpc, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
-      cache: 'no-store',
-    })
-    const j = await r.json()
-    return j?.result ?? null
-  } catch { return null }
+// tenta cada RPC da lista, com 1 retentativa, até obter um resultado válido
+async function rpcCall(rpcs: string[], to: string, data: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const rpc of rpcs) {
+      try {
+        const r = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
+          cache: 'no-store',
+        })
+        if (!r.ok) continue
+        const j = await r.json()
+        if (j?.result && j.result !== '0x') return j.result
+      } catch { }
+    }
+    if (attempt === 0) await new Promise(res => setTimeout(res, 250))
+  }
+  return null
 }
 
 function word(hex: string, i: number): bigint {
@@ -78,18 +88,6 @@ function subMod(a: bigint, b: bigint): bigint {
   return r < 0n ? r + Q256 : r
 }
 
-async function usdPrices(cgIds: string[], origin: string): Promise<Record<string, number>> {
-  const ids = Array.from(new Set(cgIds)).filter(Boolean)
-  if (!ids.length) return {}
-  try {
-    const r = await fetch(`${origin}/api/prices?ids=${ids.join(',')}`, { cache: 'no-store' })
-    const d = await r.json()
-    const coins = d?.coins || {}
-    const out: Record<string, number> = {}
-    for (const id of ids) if (coins[id]?.usd) out[id] = coins[id].usd
-    return out
-  } catch { return {} }
-}
 
 function sqrtPriceX96FromTick(tick: number): number { return Math.sqrt(Math.pow(1.0001, tick)) * 2 ** 96 }
 function amountsFromLiquidity(L: number, sqrtP: number, sqrtA: number, sqrtB: number) {
@@ -113,12 +111,28 @@ function feeGrowthInside(
   return subMod(subMod(fgGlobal, below), above)
 }
 
+// preço USD por CONTRATO (CoinGecko) — funciona pra qualquer token, não só os do mapa
+const CG_PLAT: Record<string, string> = { base: 'base', ethereum: 'ethereum', arbitrum: 'arbitrum-one' }
+async function priceByContract(network: string, addrs: string[]): Promise<Record<string, number>> {
+  const plat = CG_PLAT[network] || 'base'
+  const list = Array.from(new Set(addrs.map(a => a.toLowerCase()))).filter(Boolean)
+  if (!list.length) return {}
+  try {
+    const r = await fetch(`https://api.coingecko.com/api/v3/simple/token_price/${plat}?contract_addresses=${list.join(',')}&vs_currencies=usd`, { cache: 'no-store', headers: { accept: 'application/json' } })
+    if (!r.ok) return {}
+    const j = await r.json()
+    const out: Record<string, number> = {}
+    for (const a of list) if (j[a]?.usd) out[a] = j[a].usd
+    return out
+  } catch { return {} }
+}
+
 export async function GET(request: Request) {
   const u = new URL(request.url)
   const network = (u.searchParams.get('network') || 'base').toLowerCase()
   const id = u.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
-  const rpc = RPC[network], npm = NPM[network], factory = FACTORY[network]
+  const rpc = RPCS[network], npm = NPM[network], factory = FACTORY[network]
   if (!rpc || !npm || !factory) return NextResponse.json({ error: 'network not supported' }, { status: 400 })
 
   const posRes = await rpcCall(rpc, npm, SEL_POSITIONS + BigInt(id).toString(16).padStart(64, '0'))
@@ -136,8 +150,16 @@ export async function GET(request: Request) {
     const owed0 = word(posRes, 10)
     const owed1 = word(posRes, 11)
 
-    const t0 = TOKENS[token0], t1 = TOKENS[token1]
-    if (!t0 || !t1) return NextResponse.json({ error: 'token desconhecido', token0, token1 }, { status: 422 })
+    // resolve decimais: usa o mapa conhecido, senão lê decimals() on-chain (não trava mais em token novo)
+    async function resolveDecimals(addr: string): Promise<number> {
+      if (TOKENS[addr]) return TOKENS[addr].decimals
+      const d = await rpcCall(rpc, addr, SEL_DECIMALS)
+      const n = d ? Number(word(d, 0)) : 18
+      return n > 0 && n <= 36 ? n : 18
+    }
+    const t0 = { symbol: TOKENS[token0]?.symbol || token0.slice(0, 6), decimals: await resolveDecimals(token0), addr: token0 }
+    const t1 = { symbol: TOKENS[token1]?.symbol || token1.slice(0, 6), decimals: await resolveDecimals(token1), addr: token1 }
+    const px = await priceByContract(network, [token0, token1])   // preços USD por contrato (1 chamada)
 
     // pool
     const poolRes = await rpcCall(rpc, factory, SEL_GETPOOL + pad(token0) + pad(token1) + fee.toString(16).padStart(64, '0'))
@@ -174,15 +196,11 @@ export async function GET(request: Request) {
         const pending1 = (liquidity * subMod(fgInside1, fgInside1Last)) / Q128
         const totalFee0 = pending0 + owed0
         const totalFee1 = pending1 + owed1
-        const pxF = await usdPrices([t0.cg, t1.cg], u.origin)
         const f0 = Number(totalFee0) / 10 ** t0.decimals
         const f1 = Number(totalFee1) / 10 ** t1.decimals
-        fees = f0 * (pxF[t0.cg] || 0) + f1 * (pxF[t1.cg] || 0)
+        fees = f0 * (px[t0.addr] || 0) + f1 * (px[t1.addr] || 0)
       }
     } catch { fees = null }
-
-    const origin = u.origin
-    const px = await usdPrices([t0.cg, t1.cg], origin)
 
     // valor atual da posição
     let current_value: number | null = null
@@ -191,7 +209,7 @@ export async function GET(request: Request) {
       const sqrtB = sqrtPriceX96FromTick(tickUpper)
       const { a0, a1 } = amountsFromLiquidity(Number(liquidity), sqrtP, sqrtA, sqrtB)
       const amt0 = a0 / 10 ** t0.decimals, amt1 = a1 / 10 ** t1.decimals
-      current_value = amt0 * (px[t0.cg] || 0) + amt1 * (px[t1.cg] || 0)
+      current_value = amt0 * (px[t0.addr] || 0) + amt1 * (px[t1.addr] || 0)
     }
 
     const sp = sqrtP / 2 ** 96
