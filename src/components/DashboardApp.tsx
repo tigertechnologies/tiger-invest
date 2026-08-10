@@ -8,7 +8,7 @@ import {
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
 } from '@/lib/data'
 
-type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas'
+type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas' | 'lab'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
@@ -43,7 +43,7 @@ export default function DashboardApp({
   const RANK: Record<string, number> = { start: 1, pro: 2, alpha: 3 }
   const rank = RANK[plan] || 1
   const has = (min: number) => rank >= min
-  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3 }
+  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3, lab: 2 }
   const PLAN_NAME: Record<number, string> = { 2: 'TIGER PRO', 3: 'TIGER ALPHA' }
   const [upgrade, setUpgrade] = useState<{ tier: number; feature: string } | null>(null)
   // Aviso de renovação (aparece 5 dias antes, até o dia do vencimento)
@@ -83,6 +83,14 @@ export default function DashboardApp({
   const [curr, setCurr] = useState<'BRL' | 'USD'>('BRL')
   const [top50, setTop50] = useState<any[] | null>(null)
   const [top50Loading, setTop50Loading] = useState(false)
+  const [btclab, setBtclab] = useState<any | null>(null)
+  const [btclabLoading, setBtclabLoading] = useState(false)
+  useEffect(() => {
+    if (tab === 'lab' && btclab === null && !btclabLoading) {
+      setBtclabLoading(true)
+      fetch('/api/btclab').then(r => r.json()).then(d => setBtclab(d)).catch(() => setBtclab({})).finally(() => setBtclabLoading(false))
+    }
+  }, [tab, btclab, btclabLoading])
   useEffect(() => {
     if (tab === 'cotacao' && top50 === null && !top50Loading) {
       setTop50Loading(true)
@@ -989,6 +997,60 @@ export default function DashboardApp({
             <p className="foot-note">Dados de mercado (CoinGecko / GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada ativo antes de investir.</p>
           </section>
 
+          <section className={`screen ${tab === 'lab' ? 'active' : ''}`}>
+            <div className="eyebrow">₿ Bitcoin Lab · on-chain</div>
+            {btclabLoading && <p className="foot-note">Lendo a rede Bitcoin…</p>}
+            {btclab && (() => {
+              const b = btclab
+              const eh = b.hashrate != null ? (b.hashrate / 1e18).toFixed(0) : null       // EH/s
+              const diffT = b.difficulty != null ? (b.difficulty / 1e12).toFixed(1) : null // T
+              const mayerColor = b.mayer == null ? 'var(--muted)' : b.mayer < 1 ? 'var(--green)' : b.mayer <= 2.4 ? '#F5A623' : 'var(--red)'
+              const mayerLabel = b.mayer == null ? '—' : b.mayer < 1 ? 'Barato (abaixo da MM200)' : b.mayer <= 2.4 ? 'Neutro' : 'Caro (historicamente)'
+              return (<>
+                <div className="card">
+                  <div className="big-kv"><span className="k">Preço BTC</span><span className="v num">{b.price != null ? usd(b.price) : '—'}</span></div>
+                  <div className="big-kv"><span className="k">24h · 7d</span><span className="v num"><span style={{ color: (b.change24h || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.change24h != null ? pct(b.change24h) : '—'}</span> · <span style={{ color: (b.change7d || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.change7d != null ? pct(b.change7d) : '—'}</span></span></div>
+                  <div className="big-kv"><span className="k">Market cap</span><span className="v num">{b.marketCap != null ? abbr(b.marketCap) : '—'}</span></div>
+                  <div className="big-kv"><span className="k">Do topo (ATH)</span><span className="v num" style={{ color: 'var(--red)' }}>{b.athChange != null ? pct(b.athChange) : '—'}</span></div>
+                </div>
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 6 }}>Valuation · Mayer Multiple</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <b style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 26, color: mayerColor }}>{b.mayer != null ? b.mayer.toFixed(2) : '—'}×</b>
+                    <span style={{ color: mayerColor, fontWeight: 700, fontSize: 13 }}>{mayerLabel}</span>
+                  </div>
+                  <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Preço ÷ média móvel de 200 dias ({b.ma200 != null ? usd(b.ma200) : '—'}). Abaixo de 1 = historicamente barato; acima de ~2,4 = esticado.</p>
+                </div>
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Rede</div>
+                  <div className="trio">
+                    <div className="stat"><div className="k">Hashrate</div><div className="v num">{eh ? eh + ' EH/s' : '—'}</div></div>
+                    <div className="stat"><div className="k">Dificuldade</div><div className="v num">{diffT ? diffT + 'T' : '—'}</div></div>
+                    <div className="stat"><div className="k">Próx. reajuste</div><div className="v num" style={{ color: (b.nextAdjustPct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.nextAdjustPct != null ? pct(b.nextAdjustPct) : '—'}</div></div>
+                  </div>
+                </div>
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Taxas da rede (sat/vB)</div>
+                  {b.fees ? <div className="trio">
+                    <div className="stat"><div className="k">Rápida</div><div className="v num">{b.fees.fast}</div></div>
+                    <div className="stat"><div className="k">~30 min</div><div className="v num">{b.fees.halfHour}</div></div>
+                    <div className="stat"><div className="k">Econômica</div><div className="v num">{b.fees.economy}</div></div>
+                  </div> : <p className="foot-note">Indisponível agora.</p>}
+                  {b.mempoolCount != null && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Mempool: <b>{b.mempoolCount.toLocaleString('pt-BR')}</b> transações aguardando.</p>}
+                </div>
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Próximo halving</div>
+                  <div className="trio">
+                    <div className="stat"><div className="k">Faltam (dias)</div><div className="v num">{b.halvingDays != null ? b.halvingDays.toLocaleString('pt-BR') : '—'}</div></div>
+                    <div className="stat"><div className="k">Blocos</div><div className="v num">{b.halvingBlocksLeft != null ? (b.halvingBlocksLeft / 1000).toFixed(0) + 'k' : '—'}</div></div>
+                    <div className="stat"><div className="k">Data est.</div><div className="v num" style={{ fontSize: 14 }}>{b.halvingDate ? dBR(b.halvingDate) : '—'}</div></div>
+                  </div>
+                </div>
+                <p className="foot-note">Dados on-chain: mempool.space + CoinGecko. Ao vivo, sem chave. Não é recomendação de investimento.</p>
+              </>)
+            })()}
+          </section>
+
           <p className="foot-note"><b style={{color:'var(--pink-bright)',fontFamily:'Sora'}}>Tiger Invest</b> · Não é recomendação de investimento. Todo e qualquer investimento é por conta e risco do usuário — estude os ativos antes de aplicar seu capital.</p>
         </div>
 
@@ -998,6 +1060,7 @@ export default function DashboardApp({
             ['carteira', 'Carteira', <><rect key="a" x="3" y="6" width="18" height="13" rx="2" /><path key="b" d="M16 12h3" /></>],
             ['cotacao', 'Cotação', <path key="a" d="M4 18l5-6 4 3 6-8M4 18h16" />],
             ['radar', 'Radar', <><circle key="a" cx="12" cy="12" r="9" /><circle key="b" cx="12" cy="12" r="4.5" /><path key="c" d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>],
+            ['lab', 'BTC Lab', <><path key="a" d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3" /></>],
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
             ['aportes', 'Aportes', <><path key="a" d="M7 17V9m0 0l-3 3m3-3l3 3" /><path key="b" d="M17 7v8m0 0l3-3m-3 3l-3-3" /></>],
             ['metas', 'Metas', <><circle key="a" cx="12" cy="12" r="8" /><circle key="b" cx="12" cy="12" r="3.2" /></>],
