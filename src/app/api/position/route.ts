@@ -127,6 +127,25 @@ async function priceByContract(network: string, addrs: string[]): Promise<Record
   } catch { return {} }
 }
 
+// preço USD por token: usa cg-id via /api/prices (confiável, cacheado) e, pros que faltarem, por contrato
+async function resolvePrices(origin: string, network: string, toks: { addr: string; cg?: string }[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {}
+  const cgIds = Array.from(new Set(toks.map(t => t.cg).filter(Boolean))) as string[]
+  if (cgIds.length) {
+    try {
+      const r = await fetch(`${origin}/api/prices?ids=${cgIds.join(',')}`, { cache: 'no-store' })
+      const d = await r.json(); const coins = d?.coins || {}
+      for (const t of toks) if (t.cg && coins[t.cg]?.usd) out[t.addr] = coins[t.cg].usd
+    } catch { }
+  }
+  const missing = toks.filter(t => !out[t.addr]).map(t => t.addr)
+  if (missing.length) {
+    const byC = await priceByContract(network, missing)
+    for (const t of toks) if (!out[t.addr] && byC[t.addr]) out[t.addr] = byC[t.addr]
+  }
+  return out
+}
+
 export async function GET(request: Request) {
   const u = new URL(request.url)
   const network = (u.searchParams.get('network') || 'base').toLowerCase()
@@ -157,9 +176,9 @@ export async function GET(request: Request) {
       const n = d ? Number(word(d, 0)) : 18
       return n > 0 && n <= 36 ? n : 18
     }
-    const t0 = { symbol: TOKENS[token0]?.symbol || token0.slice(0, 6), decimals: await resolveDecimals(token0), addr: token0 }
-    const t1 = { symbol: TOKENS[token1]?.symbol || token1.slice(0, 6), decimals: await resolveDecimals(token1), addr: token1 }
-    const px = await priceByContract(network, [token0, token1])   // preços USD por contrato (1 chamada)
+    const t0 = { symbol: TOKENS[token0]?.symbol || token0.slice(0, 6), decimals: await resolveDecimals(token0), addr: token0, cg: TOKENS[token0]?.cg }
+    const t1 = { symbol: TOKENS[token1]?.symbol || token1.slice(0, 6), decimals: await resolveDecimals(token1), addr: token1, cg: TOKENS[token1]?.cg }
+    const px = await resolvePrices(u.origin, network, [t0, t1])   // preço USD por token (cg-id confiável; contrato como reserva)
 
     // pool
     const poolRes = await rpcCall(rpc, factory, SEL_GETPOOL + pad(token0) + pad(token1) + fee.toString(16).padStart(64, '0'))
@@ -216,10 +235,15 @@ export async function GET(request: Request) {
     const ratio_t1_per_t0 = sp * sp * 10 ** t0.decimals / 10 ** t1.decimals
     const ratio_t0_per_t1 = ratio_t1_per_t0 > 0 ? 1 / ratio_t1_per_t0 : null
 
+    // sem preço de nenhum token -> não zera saldo/taxas (mantém o último valor salvo)
+    const havePrice = (px[t0.addr] || 0) > 0 || (px[t1.addr] || 0) > 0
+    if (!havePrice) { fees = null; current_value = null }
+
     return NextResponse.json({
       ok: true,
       fees: fees != null ? Math.round(fees * 100000) / 100000 : null,
       current_value: current_value != null ? Math.round(current_value * 100) / 100 : null,
+      priced: havePrice,
       token0: t0.symbol, token1: t1.symbol,
       ratio_t1_per_t0, ratio_t0_per_t1,
       note: 'taxas pendentes+materializadas e saldo calculados on-chain',
