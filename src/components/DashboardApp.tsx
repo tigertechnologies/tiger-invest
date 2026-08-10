@@ -761,6 +761,28 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
                 </div>
+                {(() => {
+                  const loss = Math.max(0, (p.aporte || 0) - (p.current_value || 0))     // perda da posição vs aporte
+                  const net = (p.current_value || 0) + (p.fees || 0) - (p.aporte || 0)    // resultado já contando taxas
+                  const cobriu = net >= 0
+                  const cov = loss > 0 ? Math.min(100, (p.fees || 0) / loss * 100) : 100
+                  const cor = cobriu ? 'var(--green)' : cov >= 50 ? '#F5A623' : 'var(--red)'
+                  return (
+                    <div className="card" style={{ marginTop: 12, background: 'rgba(14,8,24,.5)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="k" style={{ fontSize: 13 }}>Taxa já cobriu a perda?</span>
+                        <b style={{ fontFamily: "'Sora'", fontWeight: 800, color: cor }}>{cobriu ? '✓ SIM' : '✗ AINDA NÃO'}</b>
+                      </div>
+                      <div style={{ height: 7, borderRadius: 999, background: 'rgba(255,255,255,.08)', marginTop: 10, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${cov}%`, background: cor, borderRadius: 999, transition: 'width .3s' }} />
+                      </div>
+                      <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>{loss > 0
+                        ? <>Taxas cobriram <b style={{ color: cor }}>{fmt(cov, 0)}%</b> da perda ({usd(p.fees || 0)} de {usd(loss)}). {cobriu ? `Sobra líquida de ${usd(net)}.` : `Faltam ${usd(loss - (p.fees || 0))} em taxa pra empatar.`}</>
+                        : <>Posição no positivo — as taxas ({usd(p.fees || 0)}) são lucro extra sobre o ganho. Resultado com taxas: <b style={{ color: 'var(--green)' }}>+{usd(net).slice(1)}</b>.</>}
+                        {' '}A perda inclui IL + variação de preço do par.</p>
+                    </div>
+                  )
+                })()}
                 <div className="grid2" style={{ marginTop: 12 }}><button className="btn ghost" onClick={() => openPool(p)}>Editar</button>{p.link ? <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.6' }} href={p.link} target="_blank" rel="noreferrer">Abrir dApp</a> : null}</div>{p.position_id ? <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} disabled={syncing === p.id} onClick={() => syncPosition(p)}>{syncing === p.id ? 'Sincronizando…' : '🔄 Sincronizar taxas'}</button> : null}
               </div>)
             })}
