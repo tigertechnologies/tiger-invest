@@ -87,6 +87,19 @@ export default function DashboardApp({
   const [btclabLoading, setBtclabLoading] = useState(false)
   const [t100, setT100] = useState<any | null>(null)
   const [t100Loading, setT100Loading] = useState(false)
+  const [cmp, setCmp] = useState<any | null>(null)
+  const [cmpA, setCmpA] = useState('tiger100')
+  const [cmpB, setCmpB] = useState('nasdaq')
+  const [cmpDays, setCmpDays] = useState(90)
+  const [cmpLoading, setCmpLoading] = useState(false)
+  const loadCmp = (a: string, b: string, days: number) => {
+    setCmpLoading(true)
+    fetch(`/api/compare?a=${a}&b=${b}&days=${days}`).then(r => r.json()).then(d => setCmp(d)).catch(() => setCmp({})).finally(() => setCmpLoading(false))
+  }
+  useEffect(() => {
+    if (tab === 'tiger100' && cmp === null && !cmpLoading) loadCmp(cmpA, cmpB, cmpDays)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
   useEffect(() => {
     if (tab === 'tiger100' && t100 === null && !t100Loading) {
       setT100Loading(true)
@@ -1085,6 +1098,57 @@ export default function DashboardApp({
                     return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 46, marginTop: 12 }}><polyline points={d} fill="none" stroke={pts[pts.length - 1] >= pts[0] ? 'var(--green)' : 'var(--red)'} strokeWidth="2" strokeLinejoin="round" /></svg>
                   })()}
                   {(!x.history || x.history.length < 2) && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>O gráfico começa a se formar a partir de hoje (base 1.000) — cada dia grava um ponto.</p>}
+                </div>
+
+                {/* COMPARATIVO / CORRELAÇÃO */}
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Comparar · correlação de mercado</div>
+                  {(() => {
+                    const OPTS: [string, string][] = [['tiger100', 'Tiger 100'], ['bitcoin', 'Bitcoin'], ['ethereum', 'Ethereum'], ['solana', 'Solana'], ['nasdaq', 'NASDAQ 100'], ['sp500', 'S&P 500'], ['gold', 'Ouro']]
+                    const sel = (val: string, set: (v: string) => void) => (
+                      <select value={val} onChange={e => { set(e.target.value) }} style={{ flex: 1, background: 'rgba(14,8,24,.65)', border: '1px solid var(--line-strong)', color: 'var(--text)', borderRadius: 10, padding: '9px 10px', fontSize: 13, fontFamily: "'JetBrains Mono'" }}>
+                        {OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    )
+                    return (<>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {sel(cmpA, setCmpA)}<span style={{ color: 'var(--muted)', fontWeight: 700 }}>vs</span>{sel(cmpB, setCmpB)}
+                      </div>
+                      <div className="pw-toggle" style={{ marginTop: 10 }}>
+                        {[[30, '30d'], [90, '90d'], [180, '180d']].map(([d, l]) => (
+                          <button key={d} className={cmpDays === d ? 'on' : ''} onClick={() => { setCmpDays(d as number) }}>{l}</button>
+                        ))}
+                      </div>
+                      <button className="btn" style={{ marginTop: 10 }} disabled={cmpLoading} onClick={() => loadCmp(cmpA, cmpB, cmpDays)}>{cmpLoading ? 'Calculando…' : 'Comparar'}</button>
+                    </>)
+                  })()}
+                  {cmp && cmp.dates && cmp.dates.length >= 2 && (() => {
+                    const A = cmp.seriesA, B = cmp.seriesB
+                    const all = [...A, ...B], min = Math.min(...all), max = Math.max(...all), span = max - min || 1
+                    const W = 320, H = 120
+                    const line = (arr: number[]) => arr.map((v: number, i: number) => `${(i / (arr.length - 1)) * W},${H - ((v - min) / span) * (H - 8) - 4}`).join(' ')
+                    const c = cmp.correlation
+                    const corrLabel = c == null ? '—' : c >= 0.6 ? 'forte positiva' : c >= 0.3 ? 'moderada positiva' : c > -0.3 ? 'fraca/nenhuma' : c > -0.6 ? 'moderada inversa' : 'forte inversa'
+                    const corrColor = c == null ? 'var(--muted)' : Math.abs(c) >= 0.6 ? (c > 0 ? 'var(--green)' : 'var(--red)') : '#F5A623'
+                    return (<>
+                      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 120, marginTop: 14 }}>
+                        <polyline points={line(A)} fill="none" stroke="#2BFFC6" strokeWidth="2" strokeLinejoin="round" />
+                        <polyline points={line(B)} fill="none" stroke="#7C5CFF" strokeWidth="2" strokeLinejoin="round" />
+                      </svg>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
+                        <span style={{ color: '#2BFFC6' }}>● {cmp.a} {cmp.perfA != null ? pct(cmp.perfA) : ''}</span>
+                        <span style={{ color: '#7C5CFF' }}>● {cmp.b} {cmp.perfB != null ? pct(cmp.perfB) : ''}</span>
+                      </div>
+                      <div className="card" style={{ marginTop: 12, background: 'rgba(14,8,24,.5)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="k">Correlação ({cmp.days} dias)</span>
+                          <b style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 20, color: corrColor }}>{c != null ? c.toFixed(2) : '—'}</b>
+                        </div>
+                        <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6 }}>Correlação <b style={{ color: corrColor }}>{corrLabel}</b>. +1 = andam juntos; 0 = independentes; −1 = opostos. Base 100 no início do período.</p>
+                      </div>
+                    </>)
+                  })()}
+                  {cmp && (!cmp.dates || cmp.dates.length < 2) && !cmpLoading && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>{cmpA === 'tiger100' || cmpB === 'tiger100' ? 'O Tiger 100 ainda tem pouco histórico — compare Bitcoin vs NASDAQ pra ver a correlação já, e o Tiger 100 vai ganhando histórico com os dias.' : 'Histórico em comum insuficiente — tente outro período.'}</p>}
                 </div>
 
                 <div className="card section-gap">
