@@ -31,6 +31,14 @@ export async function middleware(request: NextRequest) {
   if (!user && (path.startsWith('/dashboard') || path.startsWith('/admin'))) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
+  // Trava de admin já no edge: quem não está em ADMIN_EMAILS nunca chega ao /admin,
+  // mesmo que o gating da página falhe. (2ª camada além de admin/page.tsx.)
+  if (user && path.startsWith('/admin')) {
+    const admins = (process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    if (!admins.includes((user.email || '').toLowerCase())) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+  }
   if (user && path === '/login') {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }

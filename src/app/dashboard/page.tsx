@@ -33,11 +33,14 @@ export default async function DashboardPage() {
 
   if (!plan) return <Paywall userEmail={user.email ?? ''} />
 
-  const { data: holdings } = await supabase.from('holdings').select('*').order('sort', { ascending: true })
-  const { data: flows } = await supabase.from('flows').select('*').order('created_at', { ascending: false })
-  const { data: txs } = await supabase.from('transactions').select('*').order('buy_date', { ascending: true })
-  const { data: pools } = await supabase.from('pools').select('*').order('created_at', { ascending: true })
-  const { data: levels } = await supabase.from('levels').select('*').order('price', { ascending: false })
+  // Filtro user_id explícito em TODAS as leituras. O RLS já garante isolamento,
+  // mas o filtro é uma segunda trava: se o RLS de alguma tabela for desligado
+  // por engano, os dados continuam isolados por usuário.
+  const { data: holdings } = await supabase.from('holdings').select('*').eq('user_id', user.id).order('sort', { ascending: true })
+  const { data: flows } = await supabase.from('flows').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+  const { data: txs } = await supabase.from('transactions').select('*').eq('user_id', user.id).order('buy_date', { ascending: true })
+  const { data: pools } = await supabase.from('pools').select('*').eq('user_id', user.id).order('created_at', { ascending: true })
+  const { data: levels } = await supabase.from('levels').select('*').eq('user_id', user.id).order('price', { ascending: false })
 
   return (
     <DashboardApp

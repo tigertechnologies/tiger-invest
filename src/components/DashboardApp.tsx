@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
 import {
-  Holding, Flow, Transaction, Pool, Signal, DEFAULT_HOLDINGS, DEFAULT_POOL, BRL_RATE,
+  Holding, Flow, Transaction, Pool, Signal, DEFAULT_POOL, BRL_RATE,
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
 } from '@/lib/data'
 
@@ -134,19 +134,20 @@ export default function DashboardApp({
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
   const refetch = useCallback(async () => {
+    if (!userId) return
     const [h, f, t, p, l] = await Promise.all([
-      supabase.from('holdings').select('*').order('sort', { ascending: true }),
-      supabase.from('flows').select('*').order('created_at', { ascending: false }),
-      supabase.from('transactions').select('*').order('buy_date', { ascending: true }),
-      supabase.from('pools').select('*').order('created_at', { ascending: true }),
-      supabase.from('levels').select('*').order('price', { ascending: false }),
+      supabase.from('holdings').select('*').eq('user_id', userId).order('sort', { ascending: true }),
+      supabase.from('flows').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+      supabase.from('transactions').select('*').eq('user_id', userId).order('buy_date', { ascending: true }),
+      supabase.from('pools').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      supabase.from('levels').select('*').eq('user_id', userId).order('price', { ascending: false }),
     ])
     if (h.data) setHoldings(h.data as Holding[])
     if (f.data) setFlows(f.data as Flow[])
     if (t.data) setTxs(t.data as Transaction[])
     if (p.data) setPools(p.data as Pool[])
     if (l.data) setLevels(l.data as Level[])
-  }, [supabase])
+  }, [supabase, userId])
 
   // seed ÚNICO (gated por flag) — nunca reinjeta
   const seededRef = useRef(false)
@@ -156,16 +157,11 @@ export default function DashboardApp({
     ;(async () => {
       const { data: st } = await supabase.from('app_state').select('seeded').eq('user_id', userId).maybeSingle()
       if (st?.seeded) return
-      if (holdings.length === 0) {
-        await supabase.from('holdings').insert(DEFAULT_HOLDINGS.filter(r => r.kind !== 'pool').map(r => ({ ...r, user_id: userId })))
-        const cs = DEFAULT_HOLDINGS.filter(r => r.kind === 'crypto')
-        await supabase.from('transactions').insert(cs.map(r => ({
-          user_id: userId, symbol: r.symbol, name: r.name, cg_id: r.cg_id, color: r.color,
-          rede: 'BASE', corretora: 'METAMASK', carteira: 'METAMASK', buy_date: '2025-06-27',
-          qty: r.qty, buy_price: r.qty ? r.invested / r.qty : 0, stop_limit: 0, target: 0, meta_pct: r.meta_pct,
-        })))
-        await supabase.from('pools').insert({ ...DEFAULT_POOL, user_id: userId })
-      } else if (txs.length === 0) {
+      // Conta nova começa ZERADA — nunca semeamos carteira de exemplo.
+      // Único backfill: contas LEGADAS que já têm holdings próprias mas ainda
+      // não têm o ledger de transações (migração v2). Isso usa apenas os dados
+      // do próprio usuário — nada é copiado de outra conta.
+      if (holdings.length > 0 && txs.length === 0) {
         const cs = holdings.filter(h => h.kind === 'crypto')
         if (cs.length > 0) await supabase.from('transactions').insert(cs.map(h => ({
           user_id: userId, symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color,
