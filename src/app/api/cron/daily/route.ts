@@ -96,5 +96,23 @@ export async function GET(req: Request) {
     } else result.poolAlerts = 0
   } catch (e: any) { result.alertError = String(e?.message || e) }
 
+  // ---------- 3) ÍNDICE TIGER 100 (nível diário, base 1000 compondo o retorno) ----------
+  try {
+    const { computeTiger100 } = await import('@/lib/tiger100')
+    const idx = await computeTiger100()
+    if (idx) {
+      const { data: last } = await admin.from('tiger100_snapshot').select('snap_date,level').order('snap_date', { ascending: false }).limit(1)
+      const prevLevel = last && last.length && last[0].snap_date !== today ? Number(last[0].level) : (last && last.length ? Number(last[0].level) : 1000)
+      // se já existe hoje, mantém base; senão compõe o retorno 24h sobre o último nível
+      const already = last && last.length && last[0].snap_date === today
+      const level = already ? Number(last[0].level) : prevLevel * (1 + idx.ret24 / 100)
+      await admin.from('tiger100_snapshot').upsert({
+        snap_date: today, level: +level.toFixed(2), ret24: +idx.ret24.toFixed(2),
+        mcap_total: Math.round(idx.totalMcap), btc_dom: idx.btcDom != null ? +idx.btcDom.toFixed(2) : 0, breadth_up: idx.up,
+      }, { onConflict: 'snap_date' })
+      result.tiger100 = +level.toFixed(2)
+    }
+  } catch (e: any) { result.tiger100Error = String(e?.message || e) }
+
   return NextResponse.json(result)
 }

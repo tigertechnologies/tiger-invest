@@ -8,7 +8,7 @@ import {
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
 } from '@/lib/data'
 
-type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas' | 'lab'
+type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
@@ -43,7 +43,7 @@ export default function DashboardApp({
   const RANK: Record<string, number> = { start: 1, pro: 2, alpha: 3 }
   const rank = RANK[plan] || 1
   const has = (min: number) => rank >= min
-  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3, lab: 2 }
+  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3, lab: 2, tiger100: 1 }
   const PLAN_NAME: Record<number, string> = { 2: 'TIGER PRO', 3: 'TIGER ALPHA' }
   const [upgrade, setUpgrade] = useState<{ tier: number; feature: string } | null>(null)
   // Aviso de renovação (aparece 5 dias antes, até o dia do vencimento)
@@ -85,6 +85,14 @@ export default function DashboardApp({
   const [top50Loading, setTop50Loading] = useState(false)
   const [btclab, setBtclab] = useState<any | null>(null)
   const [btclabLoading, setBtclabLoading] = useState(false)
+  const [t100, setT100] = useState<any | null>(null)
+  const [t100Loading, setT100Loading] = useState(false)
+  useEffect(() => {
+    if (tab === 'tiger100' && t100 === null && !t100Loading) {
+      setT100Loading(true)
+      fetch('/api/tiger100').then(r => r.json()).then(d => setT100(d)).catch(() => setT100({})).finally(() => setT100Loading(false))
+    }
+  }, [tab, t100, t100Loading])
   useEffect(() => {
     if (tab === 'lab' && btclab === null && !btclabLoading) {
       setBtclabLoading(true)
@@ -1051,6 +1059,74 @@ export default function DashboardApp({
             })()}
           </section>
 
+          <section className={`screen ${tab === 'tiger100' ? 'active' : ''}`}>
+            <div className="eyebrow">📊 Tiger 100 · índice do mercado cripto</div>
+            {t100Loading && <p className="foot-note">Calculando o índice…</p>}
+            {t100 && t100.count && (() => {
+              const x = t100
+              const upPct = x.count ? x.up / x.count * 100 : 50
+              return (<>
+                <div className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: .5 }}>Nível do índice</div>
+                      <div style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 34, lineHeight: 1 }}>{x.level != null ? x.level.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) : '—'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 20, color: (x.ret24 || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{x.ret24 != null ? pct(x.ret24) : '—'}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>24h · 7d {x.ret7d != null ? pct(x.ret7d) : '—'}</div>
+                    </div>
+                  </div>
+                  {x.history && x.history.length >= 2 && (() => {
+                    const pts = x.history.map((h: any) => Number(h.level))
+                    const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1
+                    const W = 300, H = 46
+                    const d = pts.map((v: number, i: number) => `${(i / (pts.length - 1)) * W},${H - ((v - min) / span) * (H - 4) - 2}`).join(' ')
+                    return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 46, marginTop: 12 }}><polyline points={d} fill="none" stroke={pts[pts.length - 1] >= pts[0] ? 'var(--green)' : 'var(--red)'} strokeWidth="2" strokeLinejoin="round" /></svg>
+                  })()}
+                  {(!x.history || x.history.length < 2) && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>O gráfico começa a se formar a partir de hoje (base 1.000) — cada dia grava um ponto.</p>}
+                </div>
+
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Termômetro do mercado (24h)</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}><span style={{ color: 'var(--green)' }}>▲ {x.up} em alta</span><span style={{ color: 'var(--red)' }}>{x.down} em baixa ▼</span></div>
+                  <div style={{ height: 9, borderRadius: 999, background: 'var(--red)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${upPct}%`, background: 'var(--green)' }} /></div>
+                  <div className="trio" style={{ marginTop: 14 }}>
+                    <div className="stat"><div className="k">Market cap (100)</div><div className="v num">{abbr(x.totalMcap)}</div></div>
+                    <div className="stat"><div className="k">Dominância BTC</div><div className="v num">{x.btcDom != null ? fmt(x.btcDom, 1) + '%' : '—'}</div></div>
+                    <div className="stat"><div className="k">Moedas</div><div className="v num">{x.count}</div></div>
+                  </div>
+                </div>
+
+                <div className="grid2" style={{ marginTop: 16 }}>
+                  <div className="card" style={{ margin: 0 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>▲ Maiores altas</div>
+                    {x.gainers.map((c: any) => (<div className="kv" key={c.id}><span className="k" style={{ fontSize: 13 }}>{c.symbol}</span><span className="v num" style={{ color: 'var(--green)' }}>{pct(c.ch24 || 0)}</span></div>))}
+                  </div>
+                  <div className="card" style={{ margin: 0 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>▼ Maiores baixas</div>
+                    {x.losers.map((c: any) => (<div className="kv" key={c.id}><span className="k" style={{ fontSize: 13 }}>{c.symbol}</span><span className="v num" style={{ color: 'var(--red)' }}>{pct(c.ch24 || 0)}</span></div>))}
+                  </div>
+                </div>
+
+                <div className="card section-gap">
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>Composição · maiores pesos</div>
+                  {x.composition.map((c: any) => (
+                    <div key={c.id} style={{ marginBottom: 9 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 3 }}>
+                        <span><b>{c.symbol}</b> <span style={{ color: 'var(--muted)' }}>{c.name}</span></span>
+                        <span className="num" style={{ color: (c.ch24 || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(c.weight, 1)}%</span>
+                      </div>
+                      <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,.07)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${Math.min(100, c.weight / x.composition[0].weight * 100)}%`, background: 'linear-gradient(90deg,#7C5CFF,#2BFFC6)' }} /></div>
+                    </div>
+                  ))}
+                </div>
+                <p className="foot-note"><b>Tiger 100</b> = 100 maiores por market cap, ponderadas por capitalização com <b>teto de 15%</b> (pra BTC/ETH não dominarem) e <b>tilt de ±15%</b> pela performance de 7 dias. Nível base 1.000. Fonte: CoinGecko. Não é recomendação.</p>
+              </>)
+            })()}
+            {t100 && !t100.count && !t100Loading && <p className="foot-note">Índice indisponível agora — tente novamente em instantes.</p>}
+          </section>
+
           <p className="foot-note"><b style={{color:'var(--pink-bright)',fontFamily:'Sora'}}>Tiger Invest</b> · Não é recomendação de investimento. Todo e qualquer investimento é por conta e risco do usuário — estude os ativos antes de aplicar seu capital.</p>
         </div>
 
@@ -1061,6 +1137,7 @@ export default function DashboardApp({
             ['cotacao', 'Cotação', <path key="a" d="M4 18l5-6 4 3 6-8M4 18h16" />],
             ['radar', 'Radar', <><circle key="a" cx="12" cy="12" r="9" /><circle key="b" cx="12" cy="12" r="4.5" /><path key="c" d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>],
             ['lab', 'BTC Lab', <><path key="a" d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3" /></>],
+            ['tiger100', 'T-100', <><path key="a" d="M4 19V5M4 19h16M8 16l4-5 3 3 5-7" /></>],
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
             ['aportes', 'Aportes', <><path key="a" d="M7 17V9m0 0l-3 3m3-3l3 3" /><path key="b" d="M17 7v8m0 0l3-3m-3 3l-3-3" /></>],
             ['metas', 'Metas', <><circle key="a" cx="12" cy="12" r="8" /><circle key="b" cx="12" cy="12" r="3.2" /></>],
