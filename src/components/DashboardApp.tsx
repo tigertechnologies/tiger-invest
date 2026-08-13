@@ -1142,6 +1142,7 @@ export default function DashboardApp({
                           <button key={d} className={cmpDays === d ? 'on' : ''} onClick={() => { setCmpDays(d as number) }}>{l}</button>
                         ))}
                       </div>
+                      <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6, fontSize: 11 }}>É o teto da janela — a correlação usa a sobreposição real dos dois ativos (dias em que ambos negociaram).</p>
                       <button className="btn" style={{ marginTop: 10 }} disabled={cmpLoading} onClick={() => loadCmp(cmpA, cmpB, cmpDays)}>{cmpLoading ? 'Calculando…' : 'Comparar'}</button>
                     </>)
                   })()}
@@ -1164,14 +1165,14 @@ export default function DashboardApp({
                       </div>
                       <div className="card" style={{ marginTop: 12, background: 'rgba(14,8,24,.5)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span className="k">Correlação ({cmp.days} dias)</span>
+                          <span className="k">Correlação · {cmp.days} dias em comum · {cmp.points} pontos</span>
                           <b style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 20, color: corrColor }}>{c != null ? c.toFixed(2) : '—'}</b>
                         </div>
-                        <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6 }}>Correlação <b style={{ color: corrColor }}>{corrLabel}</b>. +1 = andam juntos; 0 = independentes; −1 = opostos. Base 100 no início do período.</p>
+                        <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6 }}>Correlação <b style={{ color: corrColor }}>{corrLabel}</b>{cmp.confidence ? <> · leitura <b>{cmp.confidence}</b>{cmp.confidence === 'indicativa' ? ' (amostra pequena — firma com mais dias)' : ''}</> : ''}. +1 = andam juntos; 0 = independentes; −1 = opostos. Base 100 no início do período.</p>
                       </div>
                     </>)
                   })()}
-                  {cmp && (!cmp.dates || cmp.dates.length < 2) && !cmpLoading && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>{cmpA === 'tiger100' || cmpB === 'tiger100' ? 'O Tiger 100 ainda tem pouco histórico — compare Bitcoin vs NASDAQ pra ver a correlação já, e o Tiger 100 vai ganhando histórico com os dias.' : 'Histórico em comum insuficiente — tente outro período.'}</p>}
+                  {cmp && (!cmp.dates || cmp.dates.length < 2) && !cmpLoading && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>{cmp.note ? <>Ainda não dá pra cruzar: {cmp.note}. A correlação aparece assim que houver ~4 dias em comum entre os dois.</> : (cmpA === 'tiger100' || cmpB === 'tiger100' ? 'O Tiger 100 ainda tem poucos dias — ele ganha histórico a cada dia. Enquanto isso, dá pra comparar Bitcoin vs NASDAQ.' : 'Histórico em comum insuficiente — tente outro período.')}</p>}
                 </div>
 
                 <div className="card section-gap">

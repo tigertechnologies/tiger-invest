@@ -24,19 +24,28 @@ async function cgSeries(id: string, days: number): Promise<Record<string, number
   } catch { return {} }
 }
 async function stooqSeries(sym: string, days: number): Promise<Record<string, number>> {
-  try {
-    const r = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`, { next: { revalidate: 3600 } })
-    if (!r.ok) return {}
-    const txt = await r.text(); const out: Record<string, number> = {}
-    const lines = txt.trim().split('\n'); // Date,Open,High,Low,Close,Volume
-    const cut = new Date(Date.now() - (days + 5) * 86400000).toISOString().slice(0, 10)
-    for (let i = 1; i < lines.length; i++) {
-      const c = lines[i].split(','); if (c.length < 5) continue
-      const d = c[0], close = parseFloat(c[4])
-      if (d >= cut && isFinite(close)) out[d] = close
-    }
-    return out
-  } catch { return {} }
+  // stooq às vezes recusa a 1ª rajada do serverless; tenta algumas vezes antes de desistir.
+  const cut = new Date(Date.now() - (days + 7) * 86400000).toISOString().slice(0, 10)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`, { next: { revalidate: 3600 } })
+      if (r.ok) {
+        const txt = await r.text()
+        // resposta válida é CSV "Date,Open,High,Low,Close,Volume"; erro vem como "N/D" ou HTML
+        if (/^date,/i.test(txt.trim())) {
+          const out: Record<string, number> = {}
+          const lines = txt.trim().split('\n')
+          for (let i = 1; i < lines.length; i++) {
+            const c = lines[i].split(','); if (c.length < 5) continue
+            const d = c[0], close = parseFloat(c[4])
+            if (d >= cut && isFinite(close)) out[d] = close
+          }
+          if (Object.keys(out).length) return out
+        }
+      }
+    } catch { /* tenta de novo */ }
+  }
+  return {}
 }
 async function indexSeries(days: number): Promise<Record<string, number>> {
   try {
@@ -67,23 +76,47 @@ export async function GET(req: Request) {
   const u = new URL(req.url)
   const aKey = u.searchParams.get('a') || 'tiger100'
   const bKey = u.searchParams.get('b') || 'nasdaq'
-  const days = Math.min(365, Math.max(14, parseInt(u.searchParams.get('days') || '90')))
+  // janela pedida é o TETO; a correlação usa a sobreposição real disponível (pode ser menor).
+  const days = Math.min(365, Math.max(7, parseInt(u.searchParams.get('days') || '90')))
   if (!ASSETS[aKey] || !ASSETS[bKey]) return NextResponse.json({ error: 'ativo inválido' }, { status: 400 })
+  if (aKey === bKey) return NextResponse.json({ error: 'escolha dois ativos diferentes' }, { status: 400 })
 
   const [ma, mb] = await Promise.all([series(aKey, days), series(bKey, days)])
-  // datas em comum, ordenadas
+  const nA = Object.keys(ma).length, nB = Object.keys(mb).length
+  const labelA = ASSETS[aKey].label, labelB = ASSETS[bKey].label
+
+  // datas em comum, ordenadas (só dias em que os DOIS negociaram — ações não têm fim de semana)
   const dates = Object.keys(ma).filter(d => d in mb).sort()
-  if (dates.length < 3) return NextResponse.json({ a: ASSETS[aKey].label, b: ASSETS[bKey].label, dates: [], correlation: null, note: 'histórico insuficiente em comum' })
+
+  // sem dados suficientes: diga exatamente qual lado está curto/vazio (nada de mensagem genérica)
+  if (dates.length < 4) {
+    const short: string[] = []
+    if (nA === 0) short.push(`${labelA} sem dados agora`)
+    else if (nA < 4) short.push(`${labelA} com só ${nA} dia(s) de histórico`)
+    if (nB === 0) short.push(`${labelB} sem dados agora`)
+    else if (nB < 4) short.push(`${labelB} com só ${nB} dia(s) de histórico`)
+    if (!short.length) short.push(`só ${dates.length} dia(s) em comum entre os dois`)
+    return NextResponse.json({
+      a: labelA, b: labelB, dates: [], correlation: null,
+      aPoints: nA, bPoints: nB, common: dates.length,
+      note: short.join(' · '),
+    })
+  }
 
   const va = dates.map(d => ma[d]), vb = dates.map(d => mb[d])
   const base = (arr: number[]) => arr.map(v => v / arr[0] * 100)               // rebase 100
   const rets = (arr: number[]) => arr.slice(1).map((v, i) => arr[i] ? v / arr[i] - 1 : 0)
-  const corr = pearson(rets(va), rets(vb))
+  const ra = rets(va), rb = rets(vb)
+  const corr = pearson(ra, rb)
+  const points = Math.min(ra.length, rb.length)                                // nº de retornos pareados
+  // confiança honesta pela amostra: quanto mais pontos, mais firme a leitura
+  const confidence = points >= 25 ? 'consistente' : points >= 10 ? 'razoável' : 'indicativa'
 
   return NextResponse.json({
-    a: ASSETS[aKey].label, b: ASSETS[bKey].label,
+    a: labelA, b: labelB,
     dates, seriesA: base(va), seriesB: base(vb),
     perfA: (va[va.length - 1] / va[0] - 1) * 100, perfB: (vb[vb.length - 1] / vb[0] - 1) * 100,
-    correlation: corr, days: dates.length,
+    correlation: corr, days: dates.length, points, confidence,
+    aPoints: nA, bPoints: nB, requestedDays: days,
   })
 }
