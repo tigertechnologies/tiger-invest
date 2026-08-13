@@ -401,13 +401,18 @@ export default function DashboardApp({
     const { data } = await supabase.from('transactions').select('*').eq('symbol', symbol)
     const list = (data || []) as Transaction[]
     if (list.length === 0) { await supabase.from('holdings').delete().eq('symbol', symbol).eq('kind', 'crypto'); return }
-    // qty final = compras + retornos - saidas (todos somam via sinal da qty).
-    // invested (custo) considera SOMENTE compras reais, para nao distorcer o custo medio
-    // quando o ativo apenas se move para/da pool (movimento interno, nao e compra/venda).
+    // qty final (saldo) = compras + retornos de pool − saidas p/ pool (soma via sinal da qty).
     const qty = list.reduce((s, x) => s + x.qty, 0)
-    const invested = list.filter(x => (x.move_kind || 'buy') === 'buy').reduce((s, x) => s + x.qty * x.buy_price, 0)
+    // preco medio REAL = media ponderada apenas das COMPRAS (saida/retorno de pool nao muda o que voce pagou).
+    const buys = list.filter(x => (x.move_kind || 'buy') === 'buy')
+    const buyQty = buys.reduce((s, x) => s + x.qty, 0)
+    const avgCost = buyQty ? buys.reduce((s, x) => s + x.qty * x.buy_price, 0) / buyQty : 0
+    // custo do que voce AINDA tem = preco medio real × saldo atual. Assim, coins que
+    // sairam p/ pool levam seu custo junto (viram custo da pool) e nao distorcem este ativo.
+    // resultado do ativo (saldo − invested) e o custo medio (invested/qty) ficam ambos reais.
+    const invested = avgCost * qty
     const existing = holdings.find(h => h.symbol === symbol && h.kind === 'crypto')
-    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: existing?.price ?? (qty ? invested / qty : 0), invested, current_value: null, sort: existing?.sort ?? 50 }
+    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: existing?.price ?? avgCost, invested, current_value: null, sort: existing?.sort ?? 50 }
     if (existing?.id) await supabase.from('holdings').update(payload).eq('id', existing.id)
     else await supabase.from('holdings').insert(payload)
   }, [supabase, holdings, userId])
@@ -1256,12 +1261,17 @@ export default function DashboardApp({
           const h = priced.find(x => x.id === detail.id) || detail
           const my = txs.filter(x => x.symbol === h.symbol)
           const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
-          // custo medio = media ponderada das COMPRAS (independe de saida/retorno de pool).
-          // usa a qtd apenas das compras como divisor; senao, uma saida p/ pool reduz a qtd
-          // e infla o custo medio (ex.: ETH aparecia $4.915 em vez de ~$3.598).
-          const buyQty = my.filter(x => (x.move_kind || 'buy') === 'buy').reduce((s, x) => s + x.qty, 0)
-          const custoMedio = buyQty ? h.invested / buyQty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
-          const firstDate = my.length ? my.map(x => x.buy_date).sort()[0] : '', L = live[h.cg_id], sg = signals[h.cg_id]
+          const custoMedio = h.qty ? h.invested / h.qty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
+          const L = live[h.cg_id], sg = signals[h.cg_id]
+          const periodDays = my.length ? daysSince(my.map(x => x.buy_date).sort()[0]) : 0
+          // Retorno REAL por janela. Padrao profissional (GIPS/CFA): periodo menor que a janela
+          // NAO e extrapolado/anualizado (isso geraria numero ficticio). Entao 30d/12m so aparecem
+          // depois que voce segura a posicao aquele tempo; antes disso ficam "—".
+          const dayPct = L?.ch24 ?? null                              // 24h: valido sempre (a qtd nao muda em 1 dia)
+          const dayUsd = dayPct != null ? v * dayPct / 100 : null
+          const m30Pct = periodDays >= 30 ? (L?.ch30 ?? null) : null   // 30 dias: so se ja segurou >= 30 dias
+          const y1Pct = periodDays >= 365 ? (L?.ch1y ?? null) : null   // 12 meses: so se ja segurou >= 1 ano
+          const usdS = (val: number | null) => val == null ? '—' : (val >= 0 ? '+' : '−') + usd(Math.abs(val))
           return (
             <div className="modal" onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
               <div className="sheet"><div className="grabber" />
@@ -1299,18 +1309,22 @@ export default function DashboardApp({
 
                   <div className="dgrid">
                     <div className="dcell"><div className="k">Saldo atual</div><div className="v">{usd(v)}</div></div>
-                    <div className="dcell"><div className="k">Total geral</div><div className="v">{usd(h.invested)}</div></div>
+                    <div className="dcell"><div className="k">Custo total</div><div className="v">{usd(h.invested)}</div></div>
                     <div className="dcell"><div className="k">Custo médio</div><div className="v">{usd(custoMedio)}</div></div>
                     <div className="dcell"><div className="k">Preço atual</div><div className="v">{usd(h.price)}</div></div>
                     <div className="dcell"><div className="k">Qtd. total</div><div className="v">{fmt(h.qty, h.qty < 1 ? 6 : 3)}</div></div>
                     <div className="dcell"><div className="k">% investimento</div><div className="v">{fmt(pctInv, 1)}%</div></div>
-                    <div className="dcell"><div className="k">P/L diário</div><div className="v" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)}</div></div>
-                    <div className="dcell"><div className="k">P/L mensal</div><div className="v" style={{ color: chColor(L?.ch30) }}>{chTxt(L?.ch30)}</div></div>
-                    <div className="dcell"><div className="k">P/L anual</div><div className="v" style={{ color: chColor(L?.ch1y) }}>{chTxt(L?.ch1y)}</div></div>
-                    <div className="dcell"><div className="k">Total de dias</div><div className="v">{firstDate ? daysSince(firstDate) : '—'}</div></div>
+                    <div className="dcell"><div className="k">Resultado</div><div className="v" style={{ color: chColor(pl) }}>{pct(plp)} · {usdS(pl)}</div></div>
+                    <div className="dcell"><div className="k">Hoje (24h)</div><div className="v" style={{ color: chColor(dayPct) }}>{dayPct == null ? '—' : pct(dayPct) + ' · ' + usdS(dayUsd)}</div></div>
+                    <div className="dcell"><div className="k">30 dias</div><div className="v" style={{ color: chColor(m30Pct) }}>{chTxt(m30Pct)}</div></div>
+                    <div className="dcell"><div className="k">12 meses</div><div className="v" style={{ color: chColor(y1Pct) }}>{chTxt(y1Pct)}</div></div>
+                    <div className="dcell"><div className="k">Em carteira</div><div className="v">{periodDays ? periodDays + (periodDays === 1 ? ' dia' : ' dias') : '—'}</div></div>
                     <div className="dcell"><div className="k">Rede</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.rede))}</div></div>
                     <div className="dcell"><div className="k">Corretora</div><div className="v" style={{ fontSize: 12 }}>{agg(my.map(x => x.corretora))}</div></div>
                   </div>
+                  <p className="foot-note" style={{ marginTop: 8 }}>
+                    <b>Resultado</b> é o seu ganho/perda real desde a compra. <b>Hoje / 30 dias / 12 meses</b> é o retorno real da posição em cada janela — só aparecem depois que você segura o ativo por esse tempo ({periodDays} {periodDays === 1 ? 'dia' : 'dias'} até agora). Projetar um período curto para "mês" ou "ano" geraria número fictício, então o app espera a janela completar.
+                  </p>
                   <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
                     <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
