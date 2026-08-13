@@ -77,6 +77,7 @@ export default function DashboardApp({
   const [cashInput, setCashInput] = useState('')
   const [assetEdit, setAssetEdit] = useState<any | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
+  const [txEdit, setTxEdit] = useState<any | null>(null)
   const [moveForm, setMoveForm] = useState<any | null>(null)
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
@@ -440,6 +441,27 @@ export default function DashboardApp({
   }
 
   async function delTx(id: string, h: Holding) { await supabase.from('transactions').delete().eq('id', id); await recompute(h.symbol, h.name, h.cg_id, h.color, h.meta_pct); await refetch() }
+  // ---- Corrigir um movimento ja lancado (ex.: digitou 0,00247 e era 0,00297) ----
+  const openTxEdit = (x: Transaction, h: Holding) => setTxEdit({
+    id: x.id, symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, meta_pct: h.meta_pct,
+    move_kind: x.move_kind || 'buy',
+    rede: x.rede || '', corretora: x.corretora || '', carteira: x.carteira || '',
+    buy_date: x.buy_date, qty: String(Math.abs(x.qty)), buy_price: String(x.buy_price),
+    stop_limit: x.stop_limit ? String(x.stop_limit) : '', target: x.target ? String(x.target) : '', note: x.note || '',
+  })
+  async function saveTxEdit() {
+    const f = txEdit; if (!f?.id) return
+    const q = Math.abs(num(f.qty)); if (!q) { setTxEdit(null); return }
+    const isMove = f.move_kind === 'to_pool' || f.move_kind === 'from_pool'
+    // saida p/ pool guarda qty negativa; compra e retorno guardam positiva
+    const signedQty = f.move_kind === 'to_pool' ? -q : q
+    const payload: any = { qty: signedQty, buy_price: num(f.buy_price), buy_date: f.buy_date }
+    if (isMove) { payload.note = f.note || '' }
+    else { payload.rede = f.rede; payload.corretora = f.corretora; payload.carteira = f.carteira; payload.stop_limit = num(f.stop_limit); payload.target = num(f.target) }
+    await supabase.from('transactions').update(payload).eq('id', f.id)
+    await recompute(f.symbol, f.name, f.cg_id, f.color, f.meta_pct)
+    setTxEdit(null); setDetail(null); await refetch()
+  }
   async function delAsset(h: Holding) { await supabase.from('transactions').delete().eq('symbol', h.symbol); if (h.id) await supabase.from('holdings').delete().eq('id', h.id); setDetail(null); await refetch() }
   async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: num(cashInput) }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
   const openAssetEdit = (h: Holding) => setAssetEdit({ id: h.id, name: h.name, symbol: h.symbol, cg_id: h.cg_id, meta_pct: String(h.meta_pct ?? '') })
@@ -1234,7 +1256,11 @@ export default function DashboardApp({
           const h = priced.find(x => x.id === detail.id) || detail
           const my = txs.filter(x => x.symbol === h.symbol)
           const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
-          const custoMedio = h.qty ? h.invested / h.qty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
+          // custo medio = media ponderada das COMPRAS (independe de saida/retorno de pool).
+          // usa a qtd apenas das compras como divisor; senao, uma saida p/ pool reduz a qtd
+          // e infla o custo medio (ex.: ETH aparecia $4.915 em vez de ~$3.598).
+          const buyQty = my.filter(x => (x.move_kind || 'buy') === 'buy').reduce((s, x) => s + x.qty, 0)
+          const custoMedio = buyQty ? h.invested / buyQty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
           const firstDate = my.length ? my.map(x => x.buy_date).sort()[0] : '', L = live[h.cg_id], sg = signals[h.cg_id]
           return (
             <div className="modal" onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
@@ -1288,7 +1314,7 @@ export default function DashboardApp({
                   <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
                     <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
-                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">valor <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
+                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">valor <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openTxEdit(x, h)}>editar ✎</span><span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
                   </div>))}
                   <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => openMove(h, 'to_pool')}>↗ Saída p/ pool</button><button className="btn ghost" onClick={() => openMove(h, 'from_pool')}>↙ Retorno de pool</button></div><div className="grid2" style={{ marginTop: 8 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
                 </div>
@@ -1316,6 +1342,35 @@ export default function DashboardApp({
             </div></div>
           </div>
         )}
+
+        {/* FORM DE CORRIGIR MOVIMENTO */}
+        {txEdit && (() => {
+          const isMove = txEdit.move_kind === 'to_pool' || txEdit.move_kind === 'from_pool'
+          return (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setTxEdit(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{isMove ? (txEdit.move_kind === 'to_pool' ? `✎ Corrigir saída → pool (${txEdit.symbol})` : `✎ Corrigir retorno ← pool (${txEdit.symbol})`) : `✎ Corrigir compra de ${txEdit.symbol}`}</h3>
+              <p className="foot-note" style={{ marginTop: 4 }}>Ajuste os dados deste movimento. O custo médio e os totais são recalculados ao salvar.</p>
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <div className="field"><label>Quantidade</label><input inputMode="decimal" value={txEdit.qty} onChange={e => setTxEdit({ ...txEdit, qty: e.target.value })} placeholder="ex: 0,00297" /></div>
+                <div className="field"><label>{isMove ? 'Preço U$ no momento' : 'Preço compra U$'}</label><input inputMode="decimal" value={txEdit.buy_price} onChange={e => setTxEdit({ ...txEdit, buy_price: e.target.value })} placeholder="ex: 1879,64" /></div>
+              </div>
+              <div className="grid2">
+                <div className="field"><label>Data</label><input type="date" value={txEdit.buy_date} onChange={e => setTxEdit({ ...txEdit, buy_date: e.target.value })} /></div>
+                {isMove
+                  ? <div className="field"><label>Nota (livre)</label><input value={txEdit.note} onChange={e => setTxEdit({ ...txEdit, note: e.target.value })} placeholder="ex: pool ETH/USDC" /></div>
+                  : <div className="field"><label>Rede</label><input value={txEdit.rede} onChange={e => setTxEdit({ ...txEdit, rede: e.target.value })} placeholder="BASE" /></div>}
+              </div>
+              {!isMove && (<>
+                <div className="grid2"><div className="field"><label>Corretora</label><input value={txEdit.corretora} onChange={e => setTxEdit({ ...txEdit, corretora: e.target.value })} placeholder="OKX" /></div><div className="field"><label>Carteira</label><input value={txEdit.carteira} onChange={e => setTxEdit({ ...txEdit, carteira: e.target.value })} placeholder="LEDGER" /></div></div>
+                <div className="grid2"><div className="field"><label>Stop limit U$</label><input inputMode="decimal" value={txEdit.stop_limit} onChange={e => setTxEdit({ ...txEdit, stop_limit: e.target.value })} /></div><div className="field"><label>Alvo venda U$</label><input inputMode="decimal" value={txEdit.target} onChange={e => setTxEdit({ ...txEdit, target: e.target.value })} /></div></div>
+              </>)}
+              <div className="modal-preview"><span>{isMove ? (txEdit.move_kind === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo') : 'Saldo deste movimento'}</span><b className="num">{fmt(num(txEdit.qty), num(txEdit.qty) < 1 ? 5 : 3)} {txEdit.symbol} · {usd(num(txEdit.qty) * num(txEdit.buy_price))}</b></div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setTxEdit(null)}>Cancelar</button><button className="btn" onClick={saveTxEdit}>Salvar correção</button></div>
+            </div></div>
+          </div>
+          )
+        })()}
 
         {/* FORM DE COMPRA */}
         {txForm && (
