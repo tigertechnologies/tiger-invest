@@ -78,6 +78,12 @@ export default function DashboardApp({
   const [assetEdit, setAssetEdit] = useState<any | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
   const [txEdit, setTxEdit] = useState<any | null>(null)
+  const [coinQuery, setCoinQuery] = useState('')
+  const [coinResults, setCoinResults] = useState<any[] | null>(null)
+  const [coinSearching, setCoinSearching] = useState(false)
+  const [coinManual, setCoinManual] = useState(false)
+  const [histPrice, setHistPrice] = useState<number | null>(null)
+  const [histLoading, setHistLoading] = useState(false)
   const [moveForm, setMoveForm] = useState<any | null>(null)
   const [poolForm, setPoolForm] = useState<any | null>(null)
   const [flowForm, setFlowForm] = useState<any | null>(null)
@@ -419,6 +425,8 @@ export default function DashboardApp({
 
   async function saveBuy() {
     const f = txForm; if (!f) return
+    if (f.isNew && !f.cg_id) { alert('Escolha a moeda na busca antes de salvar — assim o preço vem certo do mercado.'); return }
+    if (!num(f.qty)) { alert('Informe a quantidade que você comprou.'); return }
     const payload = { user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name || f.symbol, cg_id: f.cg_id, color: f.color || '#A855F7', rede: f.rede, corretora: f.corretora, carteira: f.carteira, buy_date: f.buy_date, qty: num(f.qty), buy_price: num(f.buy_price), stop_limit: num(f.stop_limit), target: num(f.target), meta_pct: num(f.meta_pct) }
     await supabase.from('transactions').insert(payload)
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, payload.meta_pct)
@@ -604,9 +612,36 @@ export default function DashboardApp({
   const chColor = (v: any) => v == null ? 'var(--muted)' : v >= 0 ? 'var(--green)' : 'var(--red)'
   const chTxt = (v: any) => v == null ? '—' : pct(v)
 
-  const openBuy = (h: Holding | null) => setTxForm(h
+  const openBuy = (h: Holding | null) => { setCoinQuery(''); setCoinResults(null); setCoinManual(false); setHistPrice(null); setTxForm(h
     ? { symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, meta_pct: h.meta_pct, rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: live[h.cg_id]?.usd ?? h.price, stop_limit: '', target: '', isNew: false }
-    : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true })
+    : { symbol: '', name: '', cg_id: '', color: '#A855F7', meta_pct: '', rede: '', corretora: '', carteira: '', buy_date: new Date().toISOString().slice(0, 10), qty: '', buy_price: '', stop_limit: '', target: '', isNew: true }) }
+  // Busca da moeda (nome -> id/logo/preço corretos). Debounce pra não estourar a API.
+  useEffect(() => {
+    if (!txForm?.isNew) return
+    const q = coinQuery.trim()
+    if (q.length < 2) { setCoinResults(null); return }
+    setCoinSearching(true)
+    const t = setTimeout(() => {
+      fetch(`/api/coinsearch?q=${encodeURIComponent(q)}`).then(r => r.json()).then(d => setCoinResults(d.coins || [])).catch(() => setCoinResults([])).finally(() => setCoinSearching(false))
+    }, 400)
+    return () => clearTimeout(t)
+  }, [coinQuery, txForm?.isNew])
+  const pickCoin = (c: any) => {
+    setTxForm((prev: any) => ({ ...prev, name: c.name, symbol: c.symbol, cg_id: c.id, buy_price: c.price != null ? String(c.price) : prev.buy_price }))
+    setCoinQuery(''); setCoinResults(null); setCoinManual(false)
+  }
+  // Compra retroativa: se a data for passada, busca o preço de mercado daquele dia (sugestão).
+  useEffect(() => {
+    const cg = txForm?.cg_id, date = txForm?.buy_date
+    if (!cg || !date) { setHistPrice(null); return }
+    const today = new Date().toISOString().slice(0, 10)
+    if (date >= today) { setHistPrice(null); return }   // hoje/futuro usa o preço ao vivo já preenchido
+    setHistLoading(true)
+    const t = setTimeout(() => {
+      fetch(`/api/coinprice?id=${encodeURIComponent(cg)}&date=${date}`).then(r => r.json()).then(d => setHistPrice(d.price ?? null)).catch(() => setHistPrice(null)).finally(() => setHistLoading(false))
+    }, 400)
+    return () => clearTimeout(t)
+  }, [txForm?.cg_id, txForm?.buy_date])
   const openLevel = (symbol: string, l?: Level) => setLevelForm(l ? { ...l } : { symbol, kind: 'support', price: '', note: '' })
   async function saveLevel() { const f = levelForm; if (!f) return; const payload = { user_id: userId, symbol: f.symbol, kind: f.kind, price: num(f.price), note: f.note || '' }; if (f.id) await supabase.from('levels').update(payload).eq('id', f.id); else await supabase.from('levels').insert(payload); setLevelForm(null); await refetch() }
   async function delLevel(id: string) { await supabase.from('levels').delete().eq('id', id); setLevelForm(null); await refetch() }
@@ -1279,6 +1314,17 @@ export default function DashboardApp({
                 <div className="sheet-scroll">
                   <h3><span className="sym" style={{ width: 32, height: 32, background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</span>{h.name}<button className="mini-add" style={{ marginLeft: 'auto' }} onClick={() => openAssetEdit(h)}>✎ editar</button><span style={{ marginLeft: 8 }} className={`pill ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</span></h3>
 
+                  {h.kind === 'crypto' && h.cg_id && !L?.usd && (
+                    <div className="card" style={{ marginTop: 10, background: 'rgba(255,90,90,.10)', border: '1px solid rgba(255,90,90,.35)' }}>
+                      <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: '#FF8A8A' }}>⚠ Preço ao vivo não encontrado para o ID CoinGecko <b>"{h.cg_id}"</b>. Confira o ID em <b>✎ editar</b> — sem um ID válido, o valor deste ativo fica errado.</p>
+                    </div>
+                  )}
+                  {h.kind === 'crypto' && L?.usd && custoMedio > 0 && Math.abs(L.usd - custoMedio) / custoMedio > 0.6 && (
+                    <div className="card" style={{ marginTop: 10, background: 'rgba(255,90,90,.10)', border: '1px solid rgba(255,90,90,.35)' }}>
+                      <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: '#FF8A8A' }}>⚠ Preço ao vivo (<b>{usd(L.usd)}</b>) muito distante do seu custo médio (<b>{usd(custoMedio)}</b>). Quase sempre é <b>ID CoinGecko errado</b> (moeda trocada) ou <b>preço/quantidade</b> digitados errado. Confira o ID em <b>✎ editar</b>, ou corrija a compra no <b>✎ editar</b> do movimento abaixo.</p>
+                    </div>
+                  )}
+
                   {has(2) ? (<>
                   {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
                   {h.kind === 'crypto' && (() => {
@@ -1393,12 +1439,42 @@ export default function DashboardApp({
             <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
               <h3>{txForm.isNew ? 'Novo ativo / 1ª compra' : `Comprar ${txForm.symbol}`}</h3>
               {txForm.isNew && (<>
-                <div className="grid2"><div className="field"><label>Nome</label><input value={txForm.name} onChange={e => setTxForm({ ...txForm, name: e.target.value })} placeholder="Ethereum" /></div><div className="field"><label>Símbolo</label><input value={txForm.symbol} onChange={e => setTxForm({ ...txForm, symbol: e.target.value.toUpperCase() })} placeholder="ETH" /></div></div>
-                <div className="grid2"><div className="field"><label>ID CoinGecko</label><input value={txForm.cg_id} onChange={e => setTxForm({ ...txForm, cg_id: e.target.value })} placeholder="ethereum" /></div><div className="field"><label>Meta %</label><input inputMode="decimal" value={txForm.meta_pct} onChange={e => setTxForm({ ...txForm, meta_pct: e.target.value })} /></div></div>
+                <div className="field"><label>Moeda</label><input value={coinQuery} onChange={e => setCoinQuery(e.target.value)} placeholder="Digite o nome: Bitcoin, Solana, Pepe…" autoFocus /></div>
+                {coinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Buscando…</p>}
+                {coinResults && coinResults.length > 0 && (
+                  <div className="card" style={{ padding: 6, marginTop: 6 }}>
+                    {coinResults.map((c: any) => (
+                      <div key={c.id} onClick={() => pickCoin(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px', cursor: 'pointer', borderRadius: 8 }}>
+                        {c.image ? <img src={c.image} alt="" width={24} height={24} style={{ borderRadius: '50%' }} /> : <span className="sym" style={{ width: 24, height: 24, background: 'linear-gradient(145deg,#A855F7,#A855F788)' }}>{c.symbol.slice(0, 3)}</span>}
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{c.name} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{c.symbol}</span></div>{c.rank ? <div style={{ fontSize: 10, color: 'var(--muted)' }}>rank #{c.rank}</div> : null}</div>
+                        <div className="num" style={{ fontSize: 12 }}>{c.price != null ? usd(c.price) : '—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {coinResults && coinResults.length === 0 && !coinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Nenhuma moeda encontrada — tente outro nome{!coinManual && <> ou <a style={{ color: 'var(--purple)', cursor: 'pointer' }} onClick={() => setCoinManual(true)}>informe manualmente</a></>}.</p>}
+                {txForm.cg_id && !coinManual && (
+                  <div className="card" style={{ marginTop: 8, background: 'rgba(43,255,198,.08)', border: '1px solid rgba(43,255,198,.3)' }}>
+                    <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: '#2BFFC6' }}>✓ Selecionada: <b>{txForm.name} ({txForm.symbol})</b> — preço já preenchido pelo mercado. É só ajustar a quantidade e o que você pagou.</p>
+                  </div>
+                )}
+                {coinManual && (
+                  <>
+                    <div className="grid2"><div className="field"><label>Nome</label><input value={txForm.name} onChange={e => setTxForm({ ...txForm, name: e.target.value })} placeholder="Ethereum" /></div><div className="field"><label>Símbolo</label><input value={txForm.symbol} onChange={e => setTxForm({ ...txForm, symbol: e.target.value.toUpperCase() })} placeholder="ETH" /></div></div>
+                    <div className="field"><label>ID CoinGecko (avançado)</label><input value={txForm.cg_id} onChange={e => setTxForm({ ...txForm, cg_id: e.target.value })} placeholder="ethereum" /></div>
+                  </>
+                )}
+                <div className="grid2"><div className="field"><label>Meta %</label><input inputMode="decimal" value={txForm.meta_pct} onChange={e => setTxForm({ ...txForm, meta_pct: e.target.value })} /></div><div className="field" /></div>
               </>)}
               <div className="grid2"><div className="field"><label>Rede</label><input value={txForm.rede} onChange={e => setTxForm({ ...txForm, rede: e.target.value })} placeholder="BASE" /></div><div className="field"><label>Corretora</label><input value={txForm.corretora} onChange={e => setTxForm({ ...txForm, corretora: e.target.value })} placeholder="BYbit" /></div></div>
               <div className="grid2"><div className="field"><label>Carteira</label><input value={txForm.carteira} onChange={e => setTxForm({ ...txForm, carteira: e.target.value })} placeholder="METAMASK" /></div><div className="field"><label>Data da compra</label><input type="date" value={txForm.buy_date} onChange={e => setTxForm({ ...txForm, buy_date: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Qtd. na compra</label><input inputMode="decimal" value={txForm.qty} onChange={e => setTxForm({ ...txForm, qty: e.target.value })} /></div><div className="field"><label>Preço compra U$</label><input inputMode="decimal" value={txForm.buy_price} onChange={e => setTxForm({ ...txForm, buy_price: e.target.value })} /></div></div>
+              {txForm.cg_id && histLoading && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Buscando preço de mercado nessa data…</p>}
+              {txForm.cg_id && !histLoading && histPrice != null && (
+                <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>
+                  Preço de mercado em {txForm.buy_date.split('-').reverse().join('/')}: <b>{usd(histPrice)}</b> · <a onClick={() => setTxForm({ ...txForm, buy_price: String(histPrice) })} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }}>usar este preço</a> (ou digite o valor exato que você pagou)
+                </p>
+              )}
               <div className="grid2"><div className="field"><label>Stop limit U$</label><input inputMode="decimal" value={txForm.stop_limit} onChange={e => setTxForm({ ...txForm, stop_limit: e.target.value })} /></div><div className="field"><label>Alvo venda U$</label><input inputMode="decimal" value={txForm.target} onChange={e => setTxForm({ ...txForm, target: e.target.value })} /></div></div>
               <div className="modal-preview"><span>Saldo desta compra</span><b className="num">{usd(num(txForm.qty) * num(txForm.buy_price))}</b></div>
               <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setTxForm(null)}>Cancelar</button><button className="btn" onClick={saveBuy}>Salvar compra</button></div>
