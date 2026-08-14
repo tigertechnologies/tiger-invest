@@ -293,6 +293,9 @@ export default function DashboardApp({
   const ph = useCallback((h: Holding): Holding => {
     if (h.cg_id && live[h.cg_id]?.usd) return { ...h, price: live[h.cg_id].usd }
     if (h.kind === 'stock' && stockLive[h.symbol]?.price) return { ...h, price: stockLive[h.symbol].price }
+    // cripto sem preço ao vivo (sem cg_id ou API fora): mostra NO CUSTO (0%), nunca um preço travado/errado.
+    // Isso cura sozinho qualquer ativo antigo, por usuário, sem precisar rodar SQL.
+    if (h.kind === 'crypto') return { ...h, price: h.qty ? h.invested / h.qty : h.price }
     return h
   }, [live, stockLive])
   const priced = useMemo(() => holdings.map(ph), [holdings, ph])
@@ -418,14 +421,16 @@ export default function DashboardApp({
     // resultado do ativo (saldo − invested) e o custo medio (invested/qty) ficam ambos reais.
     const invested = avgCost * qty
     const existing = holdings.find(h => h.symbol === symbol && h.kind === 'crypto')
-    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: existing?.price ?? avgCost, invested, current_value: null, sort: existing?.sort ?? 50 }
+    // preco guardado = custo medio atual (fallback). O preco AO VIVO sobrepoe na tela via ph()
+    // quando ha cg_id. NUNCA congelar no 1o buy: sem isso o valor trava num preco antigo/errado.
+    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: avgCost, invested, current_value: null, sort: existing?.sort ?? 50 }
     if (existing?.id) await supabase.from('holdings').update(payload).eq('id', existing.id)
     else await supabase.from('holdings').insert(payload)
   }, [supabase, holdings, userId])
 
   async function saveBuy() {
     const f = txForm; if (!f) return
-    if (f.isNew && !f.cg_id) { alert('Escolha a moeda na busca antes de salvar — assim o preço vem certo do mercado.'); return }
+    if (f.isNew && (!f.cg_id || !f.symbol)) { alert('Escolha a moeda na busca antes de salvar — assim o preço e o símbolo vêm certos do mercado.'); return }
     if (!num(f.qty)) { alert('Informe a quantidade que você comprou.'); return }
     const payload = { user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name || f.symbol, cg_id: f.cg_id, color: f.color || '#A855F7', rede: f.rede, corretora: f.corretora, carteira: f.carteira, buy_date: f.buy_date, qty: num(f.qty), buy_price: num(f.buy_price), stop_limit: num(f.stop_limit), target: num(f.target), meta_pct: num(f.meta_pct) }
     await supabase.from('transactions').insert(payload)
@@ -627,7 +632,7 @@ export default function DashboardApp({
     return () => clearTimeout(t)
   }, [coinQuery, txForm?.isNew])
   const pickCoin = (c: any) => {
-    setTxForm((prev: any) => ({ ...prev, name: c.name, symbol: c.symbol, cg_id: c.id, buy_price: c.price != null ? String(c.price) : prev.buy_price }))
+    setTxForm((prev: any) => ({ ...prev, name: c.name, symbol: c.symbol, cg_id: c.id, img: c.image || '', buy_price: c.price != null ? String(c.price) : prev.buy_price }))
     setCoinQuery(''); setCoinResults(null); setCoinManual(false)
   }
   // Compra retroativa: se a data for passada, busca o preço de mercado daquele dia (sugestão).
@@ -1466,6 +1471,16 @@ export default function DashboardApp({
                 )}
                 <div className="grid2"><div className="field"><label>Meta %</label><input inputMode="decimal" value={txForm.meta_pct} onChange={e => setTxForm({ ...txForm, meta_pct: e.target.value })} /></div><div className="field" /></div>
               </>)}
+              {txForm.cg_id && (
+                <div className="field">
+                  <label>Ativo</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 12, border: '1px solid rgba(43,255,198,.28)', background: 'rgba(43,255,198,.06)' }}>
+                    {txForm.img ? <img src={txForm.img} alt="" width={26} height={26} style={{ borderRadius: '50%' }} /> : <span className="sym" style={{ width: 26, height: 26, background: `linear-gradient(145deg,${txForm.color || '#A855F7'},${(txForm.color || '#A855F7')}88)` }}>{(txForm.symbol || '?').slice(0, 3)}</span>}
+                    <div style={{ flex: 1, minWidth: 0 }}><b style={{ fontSize: 14 }}>{txForm.name || txForm.symbol}</b> <span style={{ color: 'var(--muted)' }}>{txForm.symbol}</span></div>
+                    {num(txForm.buy_price) ? <span className="num" style={{ fontSize: 13 }}>{usd(num(txForm.buy_price))}</span> : null}
+                  </div>
+                </div>
+              )}
               <div className="grid2"><div className="field"><label>Rede</label><input value={txForm.rede} onChange={e => setTxForm({ ...txForm, rede: e.target.value })} placeholder="BASE" /></div><div className="field"><label>Corretora</label><input value={txForm.corretora} onChange={e => setTxForm({ ...txForm, corretora: e.target.value })} placeholder="BYbit" /></div></div>
               <div className="grid2"><div className="field"><label>Carteira</label><input value={txForm.carteira} onChange={e => setTxForm({ ...txForm, carteira: e.target.value })} placeholder="METAMASK" /></div><div className="field"><label>Data da compra</label><input type="date" value={txForm.buy_date} onChange={e => setTxForm({ ...txForm, buy_date: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Qtd. na compra</label><input inputMode="decimal" value={txForm.qty} onChange={e => setTxForm({ ...txForm, qty: e.target.value })} /></div><div className="field"><label>Preço compra U$</label><input inputMode="decimal" value={txForm.buy_price} onChange={e => setTxForm({ ...txForm, buy_price: e.target.value })} /></div></div>
