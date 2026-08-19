@@ -73,7 +73,7 @@ export type Transaction = {
   stop_limit: number
   target: number
   meta_pct: number
-  move_kind?: 'buy' | 'to_pool' | 'from_pool'
+  move_kind?: 'buy' | 'to_pool' | 'from_pool' | 'sell'
   note?: string
 }
 

@@ -437,24 +437,32 @@ export default function DashboardApp({
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, payload.meta_pct)
     setTxForm(null); setDetail(null); await refetch()
   }
-  const openMove = (h: Holding, dir: 'to_pool' | 'from_pool') => setMoveForm({
+  const openMove = (h: Holding, dir: 'to_pool' | 'from_pool' | 'sell') => setMoveForm({
     symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color,
     dir, qty: '', price: String(live[h.cg_id]?.usd ?? h.price ?? ''), note: '',
     buy_date: new Date().toISOString().slice(0, 10),
+    toCash: true, maxQty: h.qty,
   })
   async function saveMove() {
     const f = moveForm; if (!f) return
     const q = num(f.qty); if (!q) { setMoveForm(null); return }
-    // saida -> qty negativa; retorno -> qty positiva
-    const signedQty = f.dir === 'to_pool' ? -Math.abs(q) : Math.abs(q)
+    const isSell = f.dir === 'sell'
+    if (isSell && f.maxQty && Math.abs(q) > f.maxQty + 1e-9) { alert(`Você só tem ${fmt(f.maxQty, 5)} ${f.symbol}. Não dá pra vender mais do que possui.`); return }
+    // saída p/ pool e venda -> qty negativa; retorno -> qty positiva
+    const signedQty = (f.dir === 'to_pool' || isSell) ? -Math.abs(q) : Math.abs(q)
     const payload: any = {
       user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name, cg_id: f.cg_id, color: f.color || '#A855F7',
       rede: '', corretora: '', carteira: '', buy_date: f.buy_date,
       qty: signedQty, buy_price: num(f.price), stop_limit: 0, target: 0, meta_pct: 0,
-      move_kind: f.dir, note: f.note || (f.dir === 'to_pool' ? 'saída para pool' : 'retorno de pool'),
+      move_kind: f.dir, note: f.note || (f.dir === 'to_pool' ? 'saída para pool' : isSell ? 'venda' : 'retorno de pool'),
     }
     await supabase.from('transactions').insert(payload)
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, 0)
+    // venda: credita o valor recebido na Caixa (dólar), se marcado
+    if (isSell && f.toCash) {
+      const cash = holdings.find(h => h.kind === 'cash')
+      if (cash?.id) await supabase.from('holdings').update({ current_value: (cash.current_value || 0) + Math.abs(q) * num(f.price) }).eq('id', cash.id)
+    }
     setMoveForm(null); setDetail(null); await refetch()
   }
 
@@ -470,9 +478,9 @@ export default function DashboardApp({
   async function saveTxEdit() {
     const f = txEdit; if (!f?.id) return
     const q = Math.abs(num(f.qty)); if (!q) { setTxEdit(null); return }
-    const isMove = f.move_kind === 'to_pool' || f.move_kind === 'from_pool'
-    // saida p/ pool guarda qty negativa; compra e retorno guardam positiva
-    const signedQty = f.move_kind === 'to_pool' ? -q : q
+    const isMove = f.move_kind === 'to_pool' || f.move_kind === 'from_pool' || f.move_kind === 'sell'
+    // saida p/ pool e venda guardam qty negativa; compra e retorno guardam positiva
+    const signedQty = (f.move_kind === 'to_pool' || f.move_kind === 'sell') ? -q : q
     const payload: any = { qty: signedQty, buy_price: num(f.buy_price), buy_date: f.buy_date }
     if (isMove) { payload.note = f.note || '' }
     else { payload.rede = f.rede; payload.corretora = f.corretora; payload.carteira = f.carteira; payload.stop_limit = num(f.stop_limit); payload.target = num(f.target) }
@@ -1379,10 +1387,10 @@ export default function DashboardApp({
                   </p>
                   <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
-                    <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
-                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">valor <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openTxEdit(x, h)}>editar ✎</span><span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
+                    <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : (x.move_kind === 'sell') ? <b style={{ color: 'var(--red)' }}>· VENDA</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
+                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool' || x.move_kind === 'sell') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">{x.move_kind === 'sell' ? 'recebido' : 'valor'} <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openTxEdit(x, h)}>editar ✎</span><span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
                   </div>))}
-                  <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => openMove(h, 'to_pool')}>↗ Saída p/ pool</button><button className="btn ghost" onClick={() => openMove(h, 'from_pool')}>↙ Retorno de pool</button></div><div className="grid2" style={{ marginTop: 8 }}><button className="btn ghost danger" onClick={() => delAsset(h)}>Excluir ativo</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div>
+                  <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => openMove(h, 'sell')}>↘ Vender</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div><div className="grid2" style={{ marginTop: 8 }}><button className="btn ghost" onClick={() => openMove(h, 'to_pool')}>↗ Saída p/ pool</button><button className="btn ghost" onClick={() => openMove(h, 'from_pool')}>↙ Retorno de pool</button></div><div style={{ marginTop: 8 }}><button className="btn ghost danger" style={{ width: '100%' }} onClick={() => delAsset(h)}>Excluir ativo</button></div>
                 </div>
               </div>
             </div>
@@ -1393,29 +1401,31 @@ export default function DashboardApp({
         {moveForm && (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setMoveForm(null) }}>
             <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
-              <h3>{moveForm.dir === 'to_pool' ? `↗ Saída de ${moveForm.symbol} para pool` : `↙ Retorno de ${moveForm.symbol} da pool`}</h3>
-              <p className="foot-note" style={{ marginTop: 4 }}>{moveForm.dir === 'to_pool' ? 'Registra a saída do ativo para uma pool. O saldo diminui, sem alterar seu custo médio.' : 'Registra o retorno do ativo quando você desmonta a pool. O saldo aumenta, sem alterar seu custo médio.'}</p>
+              <h3>{moveForm.dir === 'sell' ? `↘ Vender ${moveForm.symbol}` : moveForm.dir === 'to_pool' ? `↗ Saída de ${moveForm.symbol} para pool` : `↙ Retorno de ${moveForm.symbol} da pool`}</h3>
+              <p className="foot-note" style={{ marginTop: 4 }}>{moveForm.dir === 'sell' ? `Baixa a quantidade vendida do seu saldo de ${moveForm.symbol}, sem alterar o custo médio do que sobra. O valor recebido pode ser creditado na Caixa.` : moveForm.dir === 'to_pool' ? 'Registra a saída do ativo para uma pool. O saldo diminui, sem alterar seu custo médio.' : 'Registra o retorno do ativo quando você desmonta a pool. O saldo aumenta, sem alterar seu custo médio.'}</p>
+              {moveForm.dir === 'sell' && moveForm.maxQty ? <p className="foot-note" style={{ marginTop: 6 }}>Saldo disponível: <b>{fmt(moveForm.maxQty, 5)} {moveForm.symbol}</b> <span style={{ color: 'var(--purple)', cursor: 'pointer' }} onClick={() => setMoveForm({ ...moveForm, qty: String(moveForm.maxQty) })}>· vender tudo</span></p> : null}
               <div className="grid2" style={{ marginTop: 12 }}>
                 <div className="field"><label>Quantidade</label><input inputMode="decimal" value={moveForm.qty} onChange={e => setMoveForm({ ...moveForm, qty: e.target.value })} placeholder="ex: 1.04" /></div>
-                <div className="field"><label>Preço U$ no momento</label><input inputMode="decimal" value={moveForm.price} onChange={e => setMoveForm({ ...moveForm, price: e.target.value })} placeholder="ex: 1917" /></div>
+                <div className="field"><label>{moveForm.dir === 'sell' ? 'Preço de venda U$' : 'Preço U$ no momento'}</label><input inputMode="decimal" value={moveForm.price} onChange={e => setMoveForm({ ...moveForm, price: e.target.value })} placeholder="ex: 1917" /></div>
               </div>
               <div className="grid2">
                 <div className="field"><label>Data</label><input type="date" value={moveForm.buy_date} onChange={e => setMoveForm({ ...moveForm, buy_date: e.target.value })} /></div>
-                <div className="field"><label>Nota (livre)</label><input value={moveForm.note} onChange={e => setMoveForm({ ...moveForm, note: e.target.value })} placeholder="ex: pool cbBTC/WETH 0,05%" /></div>
+                <div className="field"><label>Nota (livre)</label><input value={moveForm.note} onChange={e => setMoveForm({ ...moveForm, note: e.target.value })} placeholder={moveForm.dir === 'sell' ? 'ex: realizei parcial' : 'ex: pool cbBTC/WETH 0,05%'} /></div>
               </div>
-              <div className="modal-preview"><span>{moveForm.dir === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo'}</span><b className="num">{fmt(num(moveForm.qty), num(moveForm.qty) < 1 ? 5 : 3)} {moveForm.symbol} · {usd(num(moveForm.qty) * num(moveForm.price))}</b></div>
-              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setMoveForm(null)}>Cancelar</button><button className="btn" onClick={saveMove}>Salvar movimento</button></div>
+              {moveForm.dir === 'sell' && <label className="as-accept" style={{ marginTop: 10 }}><input type="checkbox" checked={!!moveForm.toCash} onChange={e => setMoveForm({ ...moveForm, toCash: e.target.checked })} /><span>Creditar o valor recebido na <b>Caixa (US$)</b></span></label>}
+              <div className="modal-preview"><span>{moveForm.dir === 'sell' ? 'Vai receber' : moveForm.dir === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo'}</span><b className="num">{fmt(num(moveForm.qty), num(moveForm.qty) < 1 ? 5 : 3)} {moveForm.symbol} · {usd(num(moveForm.qty) * num(moveForm.price))}</b></div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setMoveForm(null)}>Cancelar</button><button className="btn" onClick={saveMove}>{moveForm.dir === 'sell' ? 'Confirmar venda' : 'Salvar movimento'}</button></div>
             </div></div>
           </div>
         )}
 
         {/* FORM DE CORRIGIR MOVIMENTO */}
         {txEdit && (() => {
-          const isMove = txEdit.move_kind === 'to_pool' || txEdit.move_kind === 'from_pool'
+          const isMove = txEdit.move_kind === 'to_pool' || txEdit.move_kind === 'from_pool' || txEdit.move_kind === 'sell'
           return (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setTxEdit(null) }}>
             <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
-              <h3>{isMove ? (txEdit.move_kind === 'to_pool' ? `✎ Corrigir saída → pool (${txEdit.symbol})` : `✎ Corrigir retorno ← pool (${txEdit.symbol})`) : `✎ Corrigir compra de ${txEdit.symbol}`}</h3>
+              <h3>{txEdit.move_kind === 'sell' ? `✎ Corrigir venda de ${txEdit.symbol}` : isMove ? (txEdit.move_kind === 'to_pool' ? `✎ Corrigir saída → pool (${txEdit.symbol})` : `✎ Corrigir retorno ← pool (${txEdit.symbol})`) : `✎ Corrigir compra de ${txEdit.symbol}`}</h3>
               <p className="foot-note" style={{ marginTop: 4 }}>Ajuste os dados deste movimento. O custo médio e os totais são recalculados ao salvar.</p>
               <div className="grid2" style={{ marginTop: 12 }}>
                 <div className="field"><label>Quantidade</label><input inputMode="decimal" value={txEdit.qty} onChange={e => setTxEdit({ ...txEdit, qty: e.target.value })} placeholder="ex: 0,00297" /></div>
@@ -1431,7 +1441,7 @@ export default function DashboardApp({
                 <div className="grid2"><div className="field"><label>Corretora</label><input value={txEdit.corretora} onChange={e => setTxEdit({ ...txEdit, corretora: e.target.value })} placeholder="OKX" /></div><div className="field"><label>Carteira</label><input value={txEdit.carteira} onChange={e => setTxEdit({ ...txEdit, carteira: e.target.value })} placeholder="LEDGER" /></div></div>
                 <div className="grid2"><div className="field"><label>Stop limit U$</label><input inputMode="decimal" value={txEdit.stop_limit} onChange={e => setTxEdit({ ...txEdit, stop_limit: e.target.value })} /></div><div className="field"><label>Alvo venda U$</label><input inputMode="decimal" value={txEdit.target} onChange={e => setTxEdit({ ...txEdit, target: e.target.value })} /></div></div>
               </>)}
-              <div className="modal-preview"><span>{isMove ? (txEdit.move_kind === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo') : 'Saldo deste movimento'}</span><b className="num">{fmt(num(txEdit.qty), num(txEdit.qty) < 1 ? 5 : 3)} {txEdit.symbol} · {usd(num(txEdit.qty) * num(txEdit.buy_price))}</b></div>
+              <div className="modal-preview"><span>{txEdit.move_kind === 'sell' ? 'Valor recebido' : isMove ? (txEdit.move_kind === 'to_pool' ? 'Vai sair do saldo' : 'Vai voltar ao saldo') : 'Saldo deste movimento'}</span><b className="num">{fmt(num(txEdit.qty), num(txEdit.qty) < 1 ? 5 : 3)} {txEdit.symbol} · {usd(num(txEdit.qty) * num(txEdit.buy_price))}</b></div>
               <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setTxEdit(null)}>Cancelar</button><button className="btn" onClick={saveTxEdit}>Salvar correção</button></div>
             </div></div>
           </div>
