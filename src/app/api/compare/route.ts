@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { tiger100History } from '@/lib/tiger100'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +49,10 @@ async function stooqSeries(sym: string, days: number): Promise<Record<string, nu
   return {}
 }
 async function indexSeries(days: number): Promise<Record<string, number>> {
+  // 1) histórico real reconstruído do CoinGecko (não espera acumular snapshots)
+  const rebuilt = await tiger100History(days)
+  if (Object.keys(rebuilt).length >= 4) return rebuilt
+  // 2) fallback: snapshots diários já gravados
   try {
     const admin = createAdminClient()
     const cut = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)

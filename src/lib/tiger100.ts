@@ -1,6 +1,45 @@
 const CAP = 0.15          // teto de peso por moeda
 const TILT = 0.15         // tilt máximo de momentum (±15%) pela performance de 7d
 
+const STABLE = new Set(['tether', 'usd-coin', 'dai', 'first-digital-usd', 'ethena-usde', 'usds', 'binance-usd', 'true-usd', 'paypal-usd', 'frax', 'usdd', 'gemini-dollar'])
+
+// Reconstrói o histórico do índice (nível, base 1000) a partir da capitalização
+// histórica dos maiores componentes — dá ao Tiger 100 histórico real na hora,
+// sem depender de acumular snapshots diários. Retorna { 'YYYY-MM-DD': nível }.
+export async function tiger100History(days: number): Promise<Record<string, number>> {
+  try {
+    const top = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25&page=1', { next: { revalidate: 1800 }, headers: { accept: 'application/json' } })
+    if (!top.ok) return {}
+    const arr = await top.json()
+    const ids: string[] = (Array.isArray(arr) ? arr : []).filter((c: any) => c.market_cap > 0 && !STABLE.has(c.id)).slice(0, 12).map((c: any) => c.id)
+    if (!ids.length) return {}
+    const d = Math.min(365, Math.max(7, days))
+    const seriesList = await Promise.all(ids.map(async id => {
+      try {
+        const r = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${d}&interval=daily`, { next: { revalidate: 1800 }, headers: { accept: 'application/json' } })
+        if (!r.ok) return {}
+        const j = await r.json(); const out: Record<string, number> = {}
+        for (const [ts, mc] of (j.market_caps || [])) out[new Date(ts).toISOString().slice(0, 10)] = mc
+        return out
+      } catch { return {} }
+    }))
+    // soma as capitalizações por data (apenas datas presentes na âncora = maior série)
+    const anchor = seriesList.reduce((a, b) => Object.keys(b).length > Object.keys(a).length ? b : a, {})
+    const totals: Record<string, number> = {}
+    for (const date of Object.keys(anchor)) {
+      let sum = 0, ok = true
+      for (const s of seriesList) { const v = s[date]; if (v == null) { ok = false; break } sum += v }
+      if (ok && sum > 0) totals[date] = sum
+    }
+    const dates = Object.keys(totals).sort()
+    if (dates.length < 2) return {}
+    const first = totals[dates[0]]
+    const out: Record<string, number> = {}
+    for (const date of dates) out[date] = totals[date] / first * 1000
+    return out
+  } catch { return {} }
+}
+
 // Computa o índice Tiger 100 (ao vivo) a partir do top 100 do CoinGecko.
 export async function computeTiger100() {
   const r = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&price_change_percentage=24h,7d', { next: { revalidate: 120 }, headers: { accept: 'application/json' } })
