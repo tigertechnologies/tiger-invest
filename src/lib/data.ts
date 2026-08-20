@@ -107,6 +107,7 @@ export type Pool = {
   aporte: number; current_value: number
   low_range: number; high_range: number
   entry_date: string; fees: number
+  entry_price?: number   // preço do par1 na abertura da pool (para estimar IL)
   pool_address?: string; network?: string
   position_id?: string   // NFT ID da posição (p/ sincronizar saldo e taxas automaticamente)
 }

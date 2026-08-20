@@ -571,3 +571,15 @@ select{font-family:'Inter';}
 .adm-save{width:100%;background:linear-gradient(145deg,#FF2E9A,#A855F7);border:none;color:#fff;font-family:'Sora';font-weight:700;font-size:13.5px;padding:11px;border-radius:10px;cursor:pointer;box-shadow:0 0 16px rgba(255,46,154,.35);}
 .adm-save:disabled{opacity:.6;}
 .adm-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:rgba(20,14,30,.96);border:1px solid var(--pink-bright);color:#fff;padding:12px 20px;border-radius:12px;font-size:13.5px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+
+/* ---- Composição da pool (v3) ---- */
+.poolcomp{margin-top:12px;}
+.pc-head{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px;}
+.pc-bar{display:flex;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06);}
+.pc-vol{background:linear-gradient(90deg,#A855F7,#FF2E9A);}
+.pc-stb{background:linear-gradient(90deg,#2BFFC6,#12b981);}
+.pc-lbl{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:11px;color:var(--muted);margin-top:6px;}
+.pc-lbl b,.pc-lbl span{display:flex;align-items:center;gap:5px;}
+.pc-dot{width:8px;height:8px;border-radius:2px;display:inline-block;}
+.pc-dvol{background:#FF2E9A;}
+.pc-dstb{background:#2BFFC6;}

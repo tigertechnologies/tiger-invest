@@ -549,7 +549,7 @@ export default function DashboardApp({
   }
   async function savePool() {
     const f = poolForm; if (!f) return
-    const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, fees: num(f.fees), pool_address: f.pool_address || '', network: f.network || 'base', position_id: f.position_id || '' }
+    const payload = { user_id: userId, par1: f.par1.toUpperCase(), par1_cg_id: f.par1_cg_id, par2: f.par2.toUpperCase(), dapp: f.dapp, rede: f.rede, link: f.link, aporte: num(f.aporte), current_value: num(f.current_value), low_range: num(f.low_range), high_range: num(f.high_range), entry_date: f.entry_date, entry_price: num(f.entry_price), fees: num(f.fees), pool_address: f.pool_address || '', network: f.network || 'base', position_id: f.position_id || '' }
     if (f.id) await supabase.from('pools').update(payload).eq('id', f.id)
     else await supabase.from('pools').insert(payload)
     setPoolForm(null); await refetch()
@@ -717,7 +717,7 @@ export default function DashboardApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pools])
 
-  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), fees: '', pool_address: '', network: 'base', position_id: '' })
+  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), entry_price: '', fees: '', pool_address: '', network: 'base', position_id: '' })
 
   const assetRow = (h: Holding) => {
     const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
@@ -839,6 +839,22 @@ export default function DashboardApp({
               const dias = daysSince(p.entry_date), apr = p.aporte && dias > 0 ? p.fees / p.aporte / dias * 365 * 100 : 0
               const pd = p.id ? poolData[p.id] : null
               const trac = pd && pd.tvl ? pd.vol24 / pd.tvl : null
+              // composição v3: em qual ativo o capital está agora
+              const comp = (() => {
+                const P = price, pa = p.low_range, pb = p.high_range
+                if (!(P > 0 && pa > 0 && pb > pa)) return null
+                const sp = Math.sqrt(P), spa = Math.sqrt(pa), spb = Math.sqrt(pb)
+                let a0: number, a1: number
+                if (P <= pa) { a0 = (spb - spa) / (spa * spb); a1 = 0 }
+                else if (P >= pb) { a0 = 0; a1 = spb - spa }
+                else { a0 = (spb - sp) / (sp * spb); a1 = sp - spa }
+                const v0 = a0 * P, v1 = a1, tot = v0 + v1
+                return tot ? { vol: v0 / tot * 100, stable: v1 / tot * 100 } : null
+              })()
+              // IL estimado vs. HODL (par com perna estável), a partir do preço de entrada
+              const il = (p.entry_price && p.entry_price > 0 && price > 0)
+                ? (() => { const r = price / p.entry_price!; return { chg: (r - 1) * 100, il: (2 * Math.sqrt(r) / (1 + r) - 1) * 100 } })()
+                : null
               return (<div className="poolcard" key={p.id}>
                 <div className="poolhead">
                   <div className="poolt"><b>{p.par1} / {p.par2}</b><span>{p.dapp} · {p.rede}</span></div>
@@ -847,6 +863,11 @@ export default function DashboardApp({
                 <div className={`rangestatus ${inRange ? (nearEdge ? 'rs-warn' : 'rs-in') : 'rs-out'}`}>{inRange ? (nearEdge ? '⚠ PERTO DE SAIR DA FAIXA' : '✓ DENTRO DA FAIXA · gerando taxas') : below ? '▼ FORA — abaixo · sem taxas' : above ? '▲ FORA — acima · sem taxas' : 'faixa não definida'}</div>
                 <div className="poolrange2"><div className="pr-band" /><div className={`pr-cur ${inRange ? '' : 'out'}`} style={{ left: `${pos}%` }} /></div>
                 <div className="poolrangelbl"><span>{fmt(p.low_range)}</span><span className="pr-now">{price > 0 ? fmt(price) : '—'}</span><span>{fmt(p.high_range)}</span></div>
+                {comp && (<div className="poolcomp">
+                  <div className="pc-head"><span>Onde está o capital agora</span></div>
+                  <div className="pc-bar"><div className="pc-vol" style={{ width: `${comp.vol}%` }} /><div className="pc-stb" style={{ width: `${comp.stable}%` }} /></div>
+                  <div className="pc-lbl"><span><i className="pc-dot pc-dvol" /> {p.par1} {fmt(comp.vol, 0)}%</span><span>{p.par2} {fmt(comp.stable, 0)}% <i className="pc-dot pc-dstb" /></span></div>
+                </div>)}
                 {pd && has(3) && (<div className="pooltraction">
                   <div className="pt-cell"><span>TVL</span><b>{abbr(pd.tvl)}</b></div>
                   <div className="pt-cell"><span>Vol 24h</span><b>{abbr(pd.vol24)}</b></div>
@@ -860,6 +881,8 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{'$' + (Math.abs(p.fees || 0) > 0 && Math.abs(p.fees || 0) < 1 ? (p.fees || 0).toLocaleString('pt-BR', { minimumFractionDigits: 5, maximumFractionDigits: 5 }) : fmt(p.fees || 0))}</span></div>
                   <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
+                  {il && (<><div className="kv"><span className="k">{p.par1} vs. entrada ({usd(p.entry_price!)})</span><span className={`v num ${il.chg >= 0 ? 'up' : 'down'}`}>{pct(il.chg)}</span></div>
+                  <div className="kv"><span className="k">IL estimado (vs. HODL)</span><span className="v num down">{fmt(il.il, 2)}%</span></div></>)}
                 </div>
                 {(() => {
                   const loss = Math.max(0, (p.aporte || 0) - (p.current_value || 0))     // perda da posição vs aporte
@@ -1309,6 +1332,13 @@ export default function DashboardApp({
         {detail && (() => {
           const h = priced.find(x => x.id === detail.id) || detail
           const my = txs.filter(x => x.symbol === h.symbol)
+          // FIFO: vendas consomem as compras mais antigas primeiro → quanto resta de cada compra
+          const fifoRemaining: Record<string, number> = {}
+          {
+            const buysAsc = my.filter(x => (x.move_kind || 'buy') === 'buy').slice().sort((a, b) => (a.buy_date || '').localeCompare(b.buy_date || ''))
+            let sellQty = my.filter(x => x.move_kind === 'sell').reduce((s, x) => s + Math.abs(x.qty), 0)
+            for (const b of buysAsc) { const consume = Math.min(b.qty, sellQty); fifoRemaining[b.id || ''] = b.qty - consume; sellQty -= consume }
+          }
           const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
           const custoMedio = h.qty ? h.invested / h.qty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
           const L = live[h.cg_id], sg = signals[h.cg_id]
@@ -1388,7 +1418,7 @@ export default function DashboardApp({
                   <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
                     <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : (x.move_kind === 'sell') ? <b style={{ color: 'var(--red)' }}>· VENDA</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
-                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool' || x.move_kind === 'sell') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">{x.move_kind === 'sell' ? 'recebido' : 'valor'} <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <><span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openTxEdit(x, h)}>editar ✎</span><span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
+                    <div className="txmeta">{(x.move_kind === 'to_pool' || x.move_kind === 'from_pool' || x.move_kind === 'sell') ? <><span className="txtag">nota <b>{x.note || '—'}</b></span><span className="txtag">{x.move_kind === 'sell' ? 'recebido' : 'valor'} <b>{usd(Math.abs(x.qty) * x.buy_price)}</b></span></> : <>{(() => { const rem = fifoRemaining[x.id || ''] ?? x.qty; const cur = h.price || 0; if (!cur || !x.buy_price) return null; const plPct = (cur / x.buy_price - 1) * 100; const plUsd = rem * (cur - x.buy_price); const sold = rem <= 1e-9; return <span className="txtag" style={{ fontWeight: 700, color: sold ? 'var(--muted)' : plPct >= 0 ? 'var(--green)' : 'var(--red)' }}>{sold ? '✓ vendido' : `${plPct >= 0 ? '▲ +' : '▼ '}${fmt(plPct, 1)}% · ${(plUsd >= 0 ? '+' : '-') + usd(Math.abs(plUsd)).slice(1)} · resta ${fmt(rem, rem < 1 ? 5 : 3)}`}</span> })()}<span className="txtag">rede <b>{x.rede || '—'}</b></span><span className="txtag">corretora <b>{x.corretora || '—'}</b></span><span className="txtag">carteira <b>{x.carteira || '—'}</b></span><span className="txtag">saldo <b>{usd(x.qty * x.buy_price)}</b></span>{x.stop_limit > 0 && <span className="txtag">stop <b>{usd(x.stop_limit)}</b></span>}{x.target > 0 && <span className="txtag">alvo <b>{usd(x.target)}</b></span>}</>}<span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openTxEdit(x, h)}>editar ✎</span><span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => delTx(x.id!, h)}>excluir ✕</span></div>
                   </div>))}
                   <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => openMove(h, 'sell')}>↘ Vender</button><button className="btn" onClick={() => openBuy(h)}>+ Registrar compra</button></div><div className="grid2" style={{ marginTop: 8 }}><button className="btn ghost" onClick={() => openMove(h, 'to_pool')}>↗ Saída p/ pool</button><button className="btn ghost" onClick={() => openMove(h, 'from_pool')}>↙ Retorno de pool</button></div><div style={{ marginTop: 8 }}><button className="btn ghost danger" style={{ width: '100%' }} onClick={() => delAsset(h)}>Excluir ativo</button></div>
                 </div>
@@ -1516,6 +1546,7 @@ export default function DashboardApp({
               <div className="grid2"><div className="field"><label>Par 2 (estável)</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div><div className="field"><label>dApp</label><input value={poolForm.dapp} onChange={e => setPoolForm({ ...poolForm, dapp: e.target.value })} placeholder="Uniswap v3" /></div></div>
               <div className="grid2"><div className="field"><label>Rede</label><input value={poolForm.rede} onChange={e => setPoolForm({ ...poolForm, rede: e.target.value })} placeholder="Base" /></div><div className="field"><label>Data de entrada</label><input type="date" value={poolForm.entry_date} onChange={e => setPoolForm({ ...poolForm, entry_date: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Range LOW (preço)</label><input inputMode="decimal" value={poolForm.low_range} onChange={e => setPoolForm({ ...poolForm, low_range: e.target.value })} /></div><div className="field"><label>Range HIGH (preço)</label><input inputMode="decimal" value={poolForm.high_range} onChange={e => setPoolForm({ ...poolForm, high_range: e.target.value })} /></div></div>
+              <div className="field"><label>Preço do {poolForm.par1 || 'ativo'} na entrada (p/ IL)</label><input inputMode="decimal" value={poolForm.entry_price ?? ''} onChange={e => setPoolForm({ ...poolForm, entry_price: e.target.value })} placeholder="ex: 2100" /></div>
               <div className="grid2"><div className="field"><label>Aporte U$</label><input inputMode="decimal" value={poolForm.aporte} onChange={e => setPoolForm({ ...poolForm, aporte: e.target.value })} /></div><div className="field"><label>Saldo atual U$</label><input inputMode="decimal" value={poolForm.current_value} onChange={e => setPoolForm({ ...poolForm, current_value: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Taxas geradas U$</label><input inputMode="decimal" value={poolForm.fees} onChange={e => setPoolForm({ ...poolForm, fees: e.target.value })} /></div><div className="field"><label>Link da pool</label><input value={poolForm.link} onChange={e => setPoolForm({ ...poolForm, link: e.target.value })} placeholder="https://..." /></div></div>
               <div className="grid2"><div className="field"><label>Rede (p/ estatísticas)</label><input value={poolForm.network || 'base'} onChange={e => setPoolForm({ ...poolForm, network: e.target.value })} placeholder="base" /></div><div className="field"><label>Endereço da pool (tração)</label><input value={poolForm.pool_address || ''} onChange={e => setPoolForm({ ...poolForm, pool_address: e.target.value })} placeholder="0x... (opcional)" /></div></div>
