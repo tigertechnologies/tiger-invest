@@ -614,3 +614,19 @@ select{font-family:'Inter';}
 .ref-tx div b{font-family:'Sora';font-size:13px;}
 .ref-tx div span{font-size:11px;color:var(--muted);}
 .ref-tx > b{font-size:14px;white-space:nowrap;}
+
+/* ---- Pool revert-style (PoolChart) ---- */
+.pcr{margin-top:12px;}
+.pcr-sec{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;}
+.pcr-range{width:100%;height:40px;display:block;}
+.pcr-axis{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:11px;color:var(--muted);margin-top:5px;}
+.pcr-axis .in{color:#2BFFC6;font-weight:700;}
+.pcr-axis .out{color:#FF4D6D;font-weight:700;}
+.pcr-assets{display:flex;flex-direction:column;gap:7px;}
+.pcr-arow{display:grid;grid-template-columns:56px 1fr 1fr;gap:8px;align-items:center;font-family:'JetBrains Mono';font-size:11.5px;color:var(--muted);}
+.pcr-arow b{color:var(--text);font-weight:600;}
+.pcr-lab{font-family:'Sora';font-weight:600;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.pcr-toggle{width:100%;margin-top:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--pink-bright);font-family:'Sora';font-weight:600;font-size:12px;padding:9px;border-radius:10px;cursor:pointer;}
+.pcr-chartbox{margin-top:10px;}
+.pcr-chart{width:100%;height:100px;display:block;background:rgba(0,0,0,.2);border-radius:10px;border:1px solid var(--line);}
+.pcr-load{font-size:12px;color:var(--muted);text-align:center;padding:20px;}

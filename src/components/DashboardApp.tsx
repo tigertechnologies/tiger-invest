@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
+import PoolChart from './PoolChart'
 import {
   Holding, Flow, Transaction, Pool, Signal, DEFAULT_POOL, BRL_RATE,
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
@@ -862,13 +863,7 @@ export default function DashboardApp({
                   <div className="poolval"><div className="num">{usd(p.current_value)}</div><div className={`num ${pnl >= 0 ? 'up' : 'down'}`}>{pct(pnlp)}</div></div>
                 </div>
                 <div className={`rangestatus ${inRange ? (nearEdge ? 'rs-warn' : 'rs-in') : 'rs-out'}`}>{inRange ? (nearEdge ? '⚠ PERTO DE SAIR DA FAIXA' : '✓ DENTRO DA FAIXA · gerando taxas') : below ? '▼ FORA — abaixo · sem taxas' : above ? '▲ FORA — acima · sem taxas' : 'faixa não definida'}</div>
-                <div className="poolrange2"><div className="pr-band" /><div className={`pr-cur ${inRange ? '' : 'out'}`} style={{ left: `${pos}%` }} /></div>
-                <div className="poolrangelbl"><span>{fmt(p.low_range)}</span><span className="pr-now">{price > 0 ? fmt(price) : '—'}</span><span>{fmt(p.high_range)}</span></div>
-                {comp && (<div className="poolcomp">
-                  <div className="pc-head"><span>Onde está o capital agora</span></div>
-                  <div className="pc-bar"><div className="pc-vol" style={{ width: `${comp.vol}%` }} /><div className="pc-stb" style={{ width: `${comp.stable}%` }} /></div>
-                  <div className="pc-lbl"><span><i className="pc-dot pc-dvol" /> {p.par1} {fmt(comp.vol, 0)}%</span><span>{p.par2} {fmt(comp.stable, 0)}% <i className="pc-dot pc-dstb" /></span></div>
-                </div>)}
+                <PoolChart par1={p.par1} par2={p.par2} cgId={p.par1_cg_id} price={price} low={p.low_range} high={p.high_range} currentValue={p.current_value} aporte={p.aporte} entryPrice={p.entry_price} />
                 {pd && has(3) && (<div className="pooltraction">
                   <div className="pt-cell"><span>TVL</span><b>{abbr(pd.tvl)}</b></div>
                   <div className="pt-cell"><span>Vol 24h</span><b>{abbr(pd.vol24)}</b></div>
