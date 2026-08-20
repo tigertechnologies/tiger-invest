@@ -24,7 +24,7 @@ export default function MonitorTiger() {
   useEffect(() => { fetch('/api/monitor').then(r => r.json()).then(setD).catch(() => setErr(true)) }, [])
 
   if (err) return <div className="card section-gap"><div className="eyebrow">Monitor Tiger</div><p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Não foi possível carregar os dados on-chain agora. Tente novamente em instantes.</p></div>
-  if (!d) return <div className="card section-gap"><div className="eyebrow">Monitor Tiger · on-chain</div><p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Carregando dados on-chain…</p></div>
+  if (!d) return <><div className="eyebrow" style={{ marginTop: 22 }}>🐯 Monitor Tiger · on-chain</div><div className="skel skel-block" /><div className="skel skel-tall" /><div className="skel skel-block" /></>
 
   const r = d.regime
   // leitura de regime

@@ -657,3 +657,45 @@ select{font-family:'Inter';}
 .btc-z{display:block;}
 .btc-gauge-mark{position:absolute;top:-3px;width:4px;height:18px;border-radius:2px;transform:translateX(-50%);box-shadow:0 0 8px currentColor;}
 .btc-gauge-lbl{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:10px;color:var(--muted);margin-top:6px;}
+
+/* ---- Toast (substitui alert nativo) ---- */
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;max-width:min(440px,92vw);padding:13px 18px;border-radius:13px;font-size:13.5px;font-weight:500;line-height:1.4;cursor:pointer;background:rgba(20,14,30,.97);backdrop-filter:blur(12px);border:1px solid var(--line-strong);box-shadow:0 10px 34px rgba(0,0,0,.55);animation:toastIn .25s ease;text-align:center;}
+.toast-ok{border-color:rgba(43,255,154,.5);box-shadow:0 10px 34px rgba(0,0,0,.55),0 0 20px rgba(43,255,154,.18);}
+.toast-err{border-color:rgba(255,77,109,.55);box-shadow:0 10px 34px rgba(0,0,0,.55),0 0 20px rgba(255,77,109,.18);}
+.toast-info{border-color:rgba(255,46,154,.45);}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,10px);}to{opacity:1;transform:translate(-50%,0);}}
+@media (min-width:900px){.toast{bottom:40px;}}
+
+/* ============ FUNDAÇÃO VISUAL (refino DeFi Station) ============ */
+
+/* Skeletons de carregamento (shimmer) — substituem "carregando…" */
+.skel{position:relative;overflow:hidden;background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:14px;}
+.skel::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,120,205,.12),transparent);animation:shimmer 1.5s infinite;}
+@keyframes shimmer{100%{transform:translateX(100%);}}
+.skel-block{height:120px;margin-bottom:12px;}
+.skel-tall{height:180px;margin-bottom:12px;}
+.skel-line{height:13px;border-radius:7px;border:none;margin:9px 0;background:rgba(255,255,255,.06);}
+.skel-line.w60{width:60%;} .skel-line.w40{width:40%;} .skel-line.w80{width:80%;}
+
+/* Foco de input: anel neon suave (mais pro que contorno duro) */
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 3px rgba(255,46,154,.16);}
+
+/* Botões: feedback de toque + transições */
+.btn{transition:transform .12s ease,box-shadow .2s ease,opacity .2s ease,filter .2s ease;}
+.btn:active{transform:translateY(1px) scale(.99);}
+.btn:not(.ghost):hover{filter:brightness(1.06);}
+.btn:disabled{opacity:.5;cursor:not-allowed;filter:none;}
+
+/* Cards/linhas tocáveis: leve resposta ao toque */
+.asset:active,.qrow:active,.poolcard:active,.mon-chain:active{transform:scale(.992);}
+.poolcard,.qrow{transition:transform .12s ease,border-color .15s;}
+
+/* Scrollbar temática (desktop) */
+.scroll::-webkit-scrollbar,.adm-main::-webkit-scrollbar,.ref-wrap::-webkit-scrollbar{width:8px;}
+.scroll::-webkit-scrollbar-thumb,.adm-main::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(255,46,154,.35),rgba(168,85,247,.35));border-radius:8px;}
+.scroll::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(255,46,154,.55),rgba(168,85,247,.55));}
+.scroll::-webkit-scrollbar-track{background:transparent;}
+.scroll{scrollbar-width:thin;scrollbar-color:rgba(255,46,154,.35) transparent;}
+
+/* Transição suave de entrada de conteúdo carregado */
+.fade-in{animation:fade .35s ease;}

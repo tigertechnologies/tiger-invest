@@ -128,6 +128,8 @@ export default function DashboardApp({
     }
   }, [tab, top50, top50Loading])
   const [syncing, setSyncing] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' | 'info' } | null>(null)
+  const flash = (msg: string, type: 'ok' | 'err' | 'info' = 'info') => { setToast({ msg, type }); window.setTimeout(() => setToast(null), 3800) }
   const [poolRatio, setPoolRatio] = useState<Record<string, number>>({})
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
@@ -432,8 +434,8 @@ export default function DashboardApp({
 
   async function saveBuy() {
     const f = txForm; if (!f) return
-    if (f.isNew && (!f.cg_id || !f.symbol)) { alert('Escolha a moeda na busca antes de salvar — assim o preço e o símbolo vêm certos do mercado.'); return }
-    if (!num(f.qty)) { alert('Informe a quantidade que você comprou.'); return }
+    if (f.isNew && (!f.cg_id || !f.symbol)) { flash('Escolha a moeda na busca antes de salvar — assim o preço e o símbolo vêm certos do mercado.', 'err'); return }
+    if (!num(f.qty)) { flash('Informe a quantidade que você comprou.', 'err'); return }
     const payload = { user_id: userId, symbol: f.symbol.toUpperCase(), name: f.name || f.symbol, cg_id: f.cg_id, color: f.color || '#A855F7', rede: f.rede, corretora: f.corretora, carteira: f.carteira, buy_date: f.buy_date, qty: num(f.qty), buy_price: num(f.buy_price), stop_limit: num(f.stop_limit), target: num(f.target), meta_pct: num(f.meta_pct) }
     await supabase.from('transactions').insert(payload)
     await recompute(payload.symbol, payload.name, payload.cg_id, payload.color, payload.meta_pct)
@@ -449,7 +451,7 @@ export default function DashboardApp({
     const f = moveForm; if (!f) return
     const q = num(f.qty); if (!q) { setMoveForm(null); return }
     const isSell = f.dir === 'sell'
-    if (isSell && f.maxQty && Math.abs(q) > f.maxQty + 1e-9) { alert(`Você só tem ${fmt(f.maxQty, 5)} ${f.symbol}. Não dá pra vender mais do que possui.`); return }
+    if (isSell && f.maxQty && Math.abs(q) > f.maxQty + 1e-9) { flash(`Você só tem ${fmt(f.maxQty, 5)} ${f.symbol}. Não dá pra vender mais do que possui.`, 'err'); return }
     // saída p/ pool e venda -> qty negativa; retorno -> qty positiva
     const signedQty = (f.dir === 'to_pool' || isSell) ? -Math.abs(q) : Math.abs(q)
     const payload: any = {
@@ -669,7 +671,7 @@ export default function DashboardApp({
   // Sincroniza saldo atual + taxas da posição direto da blockchain (via NFT ID)
   async function syncPosition(p: Pool) {
     if (!p.id) return
-    if (!p.position_id) { alert('Cadastre o NFT ID da posição (campo "ID da posição") para sincronizar automaticamente.'); return }
+    if (!p.position_id) { flash('Cadastre o NFT ID da posição (campo "ID da posição") para sincronizar automaticamente.', 'err'); return }
     setSyncing(p.id)
     try {
       // tenta até 3x (RPC público às vezes recusa a 1ª rajada); só avisa se todas falharem
@@ -680,7 +682,7 @@ export default function DashboardApp({
         if (d?.ok) break
         await new Promise(res => setTimeout(res, 700))
       }
-      if (!d?.ok) { alert('O RPC não respondeu agora. Tente novamente em alguns segundos.'); return }
+      if (!d?.ok) { flash('O RPC não respondeu agora. Tente novamente em alguns segundos.', 'err'); return }
       await supabase.from('pools').update({ ...(d.fees != null ? { fees: d.fees } : {}), ...(d.current_value != null ? { current_value: d.current_value } : {}) }).eq('id', p.id)
       // escolhe automaticamente o ratio (cbBTC/WETH ou WETH/cbBTC) que cai dentro do range cadastrado
       const cands = [d.ratio_t0_per_t1, d.ratio_t1_per_t0].filter((x: any) => typeof x === 'number' && x > 0) as number[]
@@ -692,8 +694,8 @@ export default function DashboardApp({
       }
       if (chosen && p.id) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
       await refetch()
-      alert(`Sincronizado: saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(5) : 'indisponível agora (RPC)'} (${d.token0}/${d.token1})`)
-    } catch { alert('Falha ao sincronizar. Tente de novo em instantes.') }
+      flash(`Sincronizado ✓ saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(5) : 'indisponível'}`, 'ok')
+    } catch { flash('Falha ao sincronizar. Tente de novo em instantes.', 'err') }
     finally { setSyncing(null) }
   }
 
@@ -817,7 +819,7 @@ export default function DashboardApp({
             <div className="qrow"><div className="qsym" style={{ background: 'linear-gradient(145deg,#2775CA,#164a80)' }}>USDC</div><div className="qname"><b>USD Coin</b><span>USDC / BRL</span></div><div className="qprice"><div className="p">{brl(brlRate.usdc)}</div></div></div>
 
             <div className="qsection">Top 50 · market cap</div>
-            {top50Loading && <p className="foot-note">Carregando top 50…</p>}
+            {top50Loading && <div>{[0,1,2,3,4].map(i => <div key={i} className="skel skel-row" style={{ height: 58, borderRadius: 14, marginBottom: 9 }} />)}</div>}
             {top50 && top50.map((c: any) => (
               <div className="qrow" key={c.id}>
                 <div className="qsym" style={{ background: '#1a1226' }}>{c.img ? <img src={c.img} alt="" /> : c.symbol.slice(0, 3)}</div>
@@ -1081,7 +1083,7 @@ export default function DashboardApp({
                 <button key={k} className={radarSeg === k ? 'seg on' : 'seg'} onClick={() => setRadarSeg(k as any)}>{l}</button>
               ))}
             </div>
-            {radarLoading && <p className="foot-note">Carregando mercado…</p>}
+            {radarLoading && <div>{[0, 1, 2, 3, 4].map(i => <div key={i} className="skel skel-row" style={{ height: 62, borderRadius: 14, marginBottom: 9 }} />)}</div>}
             {!radarLoading && radar && radarSeg !== 'pools' && (radar[radarSeg] || []).map((c: any, i: number) => (
               <div className="qrow" key={i}>
                 <div className="qsym">{c.image ? <img src={c.image} alt="" /> : c.symbol.slice(0, 3)}</div>
@@ -1096,7 +1098,7 @@ export default function DashboardApp({
                 ))}
               </div>
             )}
-            {poolsLoading && radarSeg === 'pools' && <p className="foot-note">Buscando pools…</p>}
+            {poolsLoading && radarSeg === 'pools' && <div>{[0, 1, 2].map(i => <div key={i} className="skel skel-row" style={{ height: 62, borderRadius: 14, marginBottom: 9 }} />)}</div>}
             {!radarLoading && !poolsLoading && radar && radarSeg === 'pools' && (radar.pools || []).map((p: any, i: number) => (
               <div className="qrow" key={i}>
                 <div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#7C5CFF)' }}>{(p.network || '').slice(0, 3).toUpperCase()}</div>
@@ -1115,7 +1117,7 @@ export default function DashboardApp({
 
           <section className={`screen ${tab === 'tiger100' ? 'active' : ''}`}>
             <div className="eyebrow">📊 Tiger 100 · índice do mercado cripto</div>
-            {t100Loading && <p className="foot-note">Calculando o índice…</p>}
+            {t100Loading && <><div className="skel skel-tall" /><div className="skel skel-block" /></>}
             {t100 && t100.count && (() => {
               const x = t100
               const upPct = x.count ? x.up / x.count * 100 : 50
@@ -1210,6 +1212,7 @@ export default function DashboardApp({
         </nav>
 
         {/* UPGRADE (feature bloqueada por plano) */}
+        {toast && <div className={`toast toast-${toast.type}`} onClick={() => setToast(null)}>{toast.msg}</div>}
         {upgrade && (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setUpgrade(null) }}>
             <div className="sheet"><div className="grabber" />

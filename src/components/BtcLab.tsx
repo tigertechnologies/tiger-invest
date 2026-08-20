@@ -11,19 +11,13 @@ export default function BtcLab() {
   const [loading, setLoading] = useState(true)
   useEffect(() => { fetch('/api/btclab').then(r => r.json()).then(setB).catch(() => setB({})).finally(() => setLoading(false)) }, [])
 
-  if (loading) return <><div className="eyebrow">₿ Bitcoin Lab · on-chain</div><p className="foot-note">Lendo a rede Bitcoin…</p></>
+  if (loading) return <><div className="eyebrow">₿ Bitcoin Lab · on-chain</div><div className="skel skel-tall" /><div className="skel skel-block" /><div className="skel skel-block" /></>
   if (!b || b.price == null) return <><div className="eyebrow">₿ Bitcoin Lab · on-chain</div><p className="foot-note">Dados indisponíveis agora. Tente novamente em instantes.</p></>
 
-  const eh = b.hashrate != null ? (b.hashrate / 1e18).toFixed(0) : null
-  const diffT = b.difficulty != null ? (b.difficulty / 1e12).toFixed(1) : null
   const mayer = b.mayer as number | null
   const mayerColor = mayer == null ? 'var(--muted)' : mayer < 1 ? 'var(--green)' : mayer <= 2.4 ? '#F5A623' : 'var(--red)'
   const mayerLabel = mayer == null ? '—' : mayer < 1 ? 'Barato (abaixo da MM200)' : mayer <= 2.4 ? 'Neutro' : 'Caro (historicamente)'
   const mayerPos = mayer == null ? 0 : Math.max(0, Math.min(100, (mayer - 0.5) / (3 - 0.5) * 100)) // escala 0,5×–3×
-
-  // saúde da rede pela taxa rápida + mempool
-  const fast = b.fees?.fast ?? null
-  const health = fast == null ? null : fast <= 6 ? { t: 'Tranquila', c: 'var(--green)' } : fast <= 25 ? { t: 'Normal', c: '#F5A623' } : { t: 'Congestionada', c: 'var(--red)' }
 
   // gráfico 200d + linha da MM200
   const chart = (() => {
@@ -36,8 +30,6 @@ export default function BtcLab() {
     const path = s.map((v, i) => `${(i / (s.length - 1)) * W},${y(v)}`).join(' ')
     return { W, H, path, yMa: b.ma200 ? y(b.ma200) : null, up: s[s.length - 1] >= s[0] }
   })()
-
-  const epochDays = b.adjustRemaining != null ? Math.round(b.adjustRemaining * 10 / 60 / 24) : null
 
   return (
     <>
@@ -69,37 +61,6 @@ export default function BtcLab() {
           <div className="btc-gauge-lbl"><span>0,5×</span><span>1× barato</span><span>2,4×</span><span>3× caro</span></div>
         </div>
         <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Leitura: <b style={{ color: mayerColor }}>{mayerLabel}</b>. Preço ÷ média de 200 dias ({usd(b.ma200)}). Abaixo de 1× = historicamente barato; acima de ~2,4× = esticado.</p>
-      </div>
-
-      {/* Rede + ajuste de dificuldade */}
-      <div className="card section-gap">
-        <div className="eyebrow" style={{ marginBottom: 8 }}>Segurança da rede</div>
-        <div className="trio">
-          <div className="stat"><div className="k">Hashrate</div><div className="v num">{eh ? eh + ' EH/s' : '—'}</div></div>
-          <div className="stat"><div className="k">Dificuldade</div><div className="v num">{diffT ? diffT + 'T' : '—'}</div></div>
-          <div className="stat"><div className="k">Bloco</div><div className="v num" style={{ fontSize: 15 }}>{b.height != null ? b.height.toLocaleString('pt-BR') : '—'}</div></div>
-        </div>
-        {b.adjustProgress != null && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
-              <span>Ajuste de dificuldade · {b.adjustProgress.toFixed(0)}% do ciclo</span>
-              <b style={{ color: (b.nextAdjustPct || 0) >= 0 ? 'var(--green)' : 'var(--red)', fontFamily: "'JetBrains Mono'" }}>próx. {pct(b.nextAdjustPct)}</b>
-            </div>
-            <div style={{ height: 7, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${b.adjustProgress}%`, background: 'linear-gradient(90deg,#7C5CFF,#FF2E9A)', borderRadius: 999 }} /></div>
-            {b.adjustRemaining != null && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 6 }}>Faltam <b>{b.adjustRemaining.toLocaleString('pt-BR')}</b> blocos {epochDays != null ? <>(~{epochDays}d)</> : null} para o reajuste.</p>}
-          </div>
-        )}
-      </div>
-
-      {/* Taxas + mempool + saúde */}
-      <div className="card section-gap">
-        <div className="mon-h"><span className="eyebrow" style={{ margin: 0 }}>Taxas & mempool</span>{health && <b style={{ color: health.c, fontFamily: "'Sora'" }}>Rede {health.t}</b>}</div>
-        {b.fees ? <div className="trio" style={{ marginTop: 8 }}>
-          <div className="stat"><div className="k">Rápida</div><div className="v num">{b.fees.fast} <span style={{ fontSize: 10, color: 'var(--muted)' }}>sat/vB</span></div></div>
-          <div className="stat"><div className="k">~30 min</div><div className="v num">{b.fees.halfHour}</div></div>
-          <div className="stat"><div className="k">Econômica</div><div className="v num">{b.fees.economy}</div></div>
-        </div> : <p className="foot-note">Indisponível agora.</p>}
-        {b.mempoolCount != null && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}><b>{b.mempoolCount.toLocaleString('pt-BR')}</b> transações na fila (mempool).{health ? ` Rede ${health.t.toLowerCase()} — bom momento pra ${health.t === 'Congestionada' ? 'esperar' : 'transacionar'}.` : ''}</p>}
       </div>
 
       {/* Halving */}
