@@ -83,5 +83,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'falha ao processar' }, { status: 500 })
   }
 
+  // Comissão de indicação (Tigre Embaixador) — não-crítico, idempotente.
+  try {
+    const { data: ord } = await supabase.from('plan_orders').select('user_id,amount_cents').eq('id', orderId).maybeSingle()
+    if (ord?.user_id) {
+      await (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>) => Promise<{ error: unknown }> })
+        .rpc('credit_referral_commission', { p_payer: ord.user_id, p_payment_ref: String(pagamento.id), p_amount_cents: ord.amount_cents })
+    }
+  } catch (e) { console.error('[mp webhook] comissão indicação (não-crítico):', (e as Error).message) }
+
   return Response.json({ ok: true }, { status: 200 })
 }

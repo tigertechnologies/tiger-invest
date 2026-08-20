@@ -740,6 +740,7 @@ export default function DashboardApp({
           <div className="brand"><b>Tiger Invest</b><span>Controle de Ativos</span></div>
           <div className="top-actions">
             <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{allAlerts.length > 0 && <span className="bell-badge">{allAlerts.length}</span>}</button>
+            <button className="logout" style={{ borderColor: 'rgba(43,255,198,.5)', color: '#2BFFC6' }} onClick={() => router.push('/indicacoes')}>Indicar</button>
             {isAdmin && <button className="logout" style={{ borderColor: 'rgba(255,176,32,.5)', color: '#FFB020' }} onClick={() => router.push('/admin')}>Admin</button>}
             <div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button>
           </div>

@@ -17,6 +17,12 @@ export type AdminData = {
     revenueCents: number; paidCount: number; mrrCents: number
     byPlan: Record<string, number>
   }
+  referral: {
+    taxaMp: number
+    totalComissaoCents: number; totalUsadoCents: number; saldoCirculacaoCents: number
+    indicadores: { userId: string; email: string; name: string; ativos: number; pct: number; saldoCents: number; ganhoCents: number }[]
+    transacoes: { id: string; email: string; tipo: string; valor_cents: number; descricao: string; created_at: string }[]
+  }
 }
 
 export async function loadAdminData(): Promise<AdminData> {
@@ -73,12 +79,42 @@ export async function loadAdminData(): Promise<AdminData> {
   })
   const signups30d = users.filter(u => Date.now() - new Date(u.createdAt).getTime() < 30 * 864e5).length
 
+  // ---- Indicações / carteira de créditos ----
+  const nameById: Record<string, string> = {}
+  authUsers.forEach(u => { nameById[u.id] = ((u.user_metadata as any)?.full_name) || '' })
+  const [{ data: refRows }, { data: creditRows }, { data: taxaRow }] = await Promise.all([
+    admin.from('referrals').select('user_id,referral_code,referred_by'),
+    admin.from('credit_transactions').select('id,user_id,tipo,valor_cents,descricao,created_at').order('created_at', { ascending: false }),
+    admin.from('app_settings').select('value').eq('key', 'taxa_mp').maybeSingle(),
+  ])
+  const credits = creditRows || []
+  const refs = refRows || []
+  const codeByUser: Record<string, string> = {}
+  refs.forEach((r: any) => { codeByUser[r.user_id] = r.referral_code })
+  const activeSet = new Set(users.filter(u => u.status === 'active').map(u => u.id))
+  const saldoByUser: Record<string, number> = {}, ganhoByUser: Record<string, number> = {}
+  credits.forEach((c: any) => { saldoByUser[c.user_id] = (saldoByUser[c.user_id] || 0) + c.valor_cents; if (c.valor_cents > 0) ganhoByUser[c.user_id] = (ganhoByUser[c.user_id] || 0) + c.valor_cents })
+  const refTier = (n: number) => n >= 10 ? 10 : n >= 5 ? 7 : n >= 2 ? 5 : 3
+  const indicadores = refs.filter((r: any) => refs.some((x: any) => x.referred_by === r.referral_code))
+    .map((r: any) => {
+      const ativos = refs.filter((x: any) => x.referred_by === r.referral_code && activeSet.has(x.user_id)).length
+      return { userId: r.user_id, email: emailById[r.user_id] || '', name: nameById[r.user_id] || '', ativos, pct: refTier(ativos), saldoCents: saldoByUser[r.user_id] || 0, ganhoCents: ganhoByUser[r.user_id] || 0 }
+    }).sort((a: any, b: any) => b.ganhoCents - a.ganhoCents)
+  const totalComissaoCents = credits.filter((c: any) => c.tipo === 'comissao').reduce((s: number, c: any) => s + c.valor_cents, 0)
+  const totalUsadoCents = -credits.filter((c: any) => c.valor_cents < 0).reduce((s: number, c: any) => s + c.valor_cents, 0)
+  const saldoCirculacaoCents = credits.reduce((s: number, c: any) => s + c.valor_cents, 0)
+  const transacoes = credits.slice(0, 200).map((c: any) => ({ id: c.id, email: emailById[c.user_id] || '', tipo: c.tipo, valor_cents: c.valor_cents, descricao: c.descricao, created_at: c.created_at }))
+
   return {
     users, orders: orderList, plans,
     metrics: {
       totalUsers: users.length,
       activeSubs: users.filter(u => u.status === 'active').length,
       signups30d, revenueCents, paidCount: paid.length, mrrCents, byPlan,
+    },
+    referral: {
+      taxaMp: Number((taxaRow as any)?.value ?? 1),
+      totalComissaoCents, totalUsadoCents, saldoCirculacaoCents, indicadores, transacoes,
     },
   }
 }

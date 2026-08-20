@@ -51,3 +51,22 @@ export async function savePlan(id: string, patch: { name: string; priceReais: nu
   }).eq('id', id)
   return error ? { ok: false, erro: error.message } : { ok: true }
 }
+
+/** Ajuste manual de créditos na carteira de um usuário (bônus/correção). */
+export async function ajustarCredito(userId: string, valorReais: number, motivo: string): Promise<{ ok: boolean; erro?: string }> {
+  await requireAdmin()
+  if (!userId || !valorReais) return { ok: false, erro: 'Dados inválidos.' }
+  const admin = createAdminClient()
+  const { error } = await admin.from('credit_transactions').insert({
+    user_id: userId, tipo: 'ajuste', valor_cents: Math.round(valorReais * 100), descricao: motivo || 'Ajuste manual',
+  })
+  return error ? { ok: false, erro: error.message } : { ok: true }
+}
+
+/** Define a taxa do Mercado Pago (%) usada no líquido da comissão. */
+export async function setTaxaMp(pct: number): Promise<{ ok: boolean; erro?: string }> {
+  await requireAdmin()
+  const admin = createAdminClient()
+  const { error } = await admin.from('app_settings').upsert({ key: 'taxa_mp', value: String(pct) }, { onConflict: 'key' })
+  return error ? { ok: false, erro: error.message } : { ok: true }
+}

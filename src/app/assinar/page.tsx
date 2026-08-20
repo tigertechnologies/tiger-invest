@@ -29,10 +29,14 @@ export default function Assinar() {
   const [copied, setCopied] = useState(false)
   const pollRef = useRef<any>(null)
 
+  const [refCode, setRefCode] = useState('')
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     if (q.get('plano')) setPlanId(q.get('plano')!)
     if (q.get('ciclo')) setCycle(q.get('ciclo')!)
+    const ref = q.get('ref')
+    if (ref) { setRefCode(ref.toUpperCase()); try { localStorage.setItem('ti_ref', ref.toUpperCase()) } catch {} }
+    else { try { const s = localStorage.getItem('ti_ref'); if (s) setRefCode(s) } catch {} }
     supabase.auth.getUser().then(({ data }) => { setLogged(!!data.user); setLoggedEmail(data.user?.email || '') })
     fetch('/api/plans').then(r => r.json()).then(d => { if (Array.isArray(d) && d.length) setPlans(d) }).catch(() => {})
   }, [supabase])
@@ -54,7 +58,7 @@ export default function Assinar() {
     setLoading(true); setMsg('')
     const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { data: { full_name: name, city, state: uf, plan: planId, cycle, accepted_terms: true, accepted_at: new Date().toISOString() } },
+      options: { data: { full_name: name, city, state: uf, plan: planId, cycle, accepted_terms: true, accepted_at: new Date().toISOString(), ref_code: refCode || undefined } },
     })
     setLoading(false)
     if (error) { setMsg(error.message); return }

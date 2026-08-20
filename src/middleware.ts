@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const path = request.nextUrl.pathname
 
-  if (!user && (path.startsWith('/dashboard') || path.startsWith('/admin'))) {
+  if (!user && (path.startsWith('/dashboard') || path.startsWith('/admin') || path.startsWith('/indicacoes'))) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   // Trava de admin já no edge: quem não está em ADMIN_EMAILS nunca chega ao /admin,
