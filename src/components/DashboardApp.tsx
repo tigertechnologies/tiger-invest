@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import Background from './Background'
 import PoolChart from './PoolChart'
 import MonitorTiger from './MonitorTiger'
+import BtcLab from './BtcLab'
 import {
   Holding, Flow, Transaction, Pool, Signal, DEFAULT_POOL, BRL_RATE,
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
@@ -1109,57 +1110,7 @@ export default function DashboardApp({
           </section>
 
           <section className={`screen ${tab === 'lab' ? 'active' : ''}`}>
-            <div className="eyebrow">₿ Bitcoin Lab · on-chain</div>
-            {btclabLoading && <p className="foot-note">Lendo a rede Bitcoin…</p>}
-            {btclab && (() => {
-              const b = btclab
-              const eh = b.hashrate != null ? (b.hashrate / 1e18).toFixed(0) : null       // EH/s
-              const diffT = b.difficulty != null ? (b.difficulty / 1e12).toFixed(1) : null // T
-              const mayerColor = b.mayer == null ? 'var(--muted)' : b.mayer < 1 ? 'var(--green)' : b.mayer <= 2.4 ? '#F5A623' : 'var(--red)'
-              const mayerLabel = b.mayer == null ? '—' : b.mayer < 1 ? 'Barato (abaixo da MM200)' : b.mayer <= 2.4 ? 'Neutro' : 'Caro (historicamente)'
-              return (<>
-                <div className="card">
-                  <div className="big-kv"><span className="k">Preço BTC</span><span className="v num">{b.price != null ? usd(b.price) : '—'}</span></div>
-                  <div className="big-kv"><span className="k">24h · 7d</span><span className="v num"><span style={{ color: (b.change24h || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.change24h != null ? pct(b.change24h) : '—'}</span> · <span style={{ color: (b.change7d || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.change7d != null ? pct(b.change7d) : '—'}</span></span></div>
-                  <div className="big-kv"><span className="k">Market cap</span><span className="v num">{b.marketCap != null ? abbr(b.marketCap) : '—'}</span></div>
-                  <div className="big-kv"><span className="k">Do topo (ATH)</span><span className="v num" style={{ color: 'var(--red)' }}>{b.athChange != null ? pct(b.athChange) : '—'}</span></div>
-                </div>
-                <div className="card section-gap">
-                  <div className="eyebrow" style={{ marginBottom: 6 }}>Valuation · Mayer Multiple</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <b style={{ fontFamily: "'Sora'", fontWeight: 800, fontSize: 26, color: mayerColor }}>{b.mayer != null ? b.mayer.toFixed(2) : '—'}×</b>
-                    <span style={{ color: mayerColor, fontWeight: 700, fontSize: 13 }}>{mayerLabel}</span>
-                  </div>
-                  <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Preço ÷ média móvel de 200 dias ({b.ma200 != null ? usd(b.ma200) : '—'}). Abaixo de 1 = historicamente barato; acima de ~2,4 = esticado.</p>
-                </div>
-                <div className="card section-gap">
-                  <div className="eyebrow" style={{ marginBottom: 8 }}>Rede</div>
-                  <div className="trio">
-                    <div className="stat"><div className="k">Hashrate</div><div className="v num">{eh ? eh + ' EH/s' : '—'}</div></div>
-                    <div className="stat"><div className="k">Dificuldade</div><div className="v num">{diffT ? diffT + 'T' : '—'}</div></div>
-                    <div className="stat"><div className="k">Próx. reajuste</div><div className="v num" style={{ color: (b.nextAdjustPct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{b.nextAdjustPct != null ? pct(b.nextAdjustPct) : '—'}</div></div>
-                  </div>
-                </div>
-                <div className="card section-gap">
-                  <div className="eyebrow" style={{ marginBottom: 8 }}>Taxas da rede (sat/vB)</div>
-                  {b.fees ? <div className="trio">
-                    <div className="stat"><div className="k">Rápida</div><div className="v num">{b.fees.fast}</div></div>
-                    <div className="stat"><div className="k">~30 min</div><div className="v num">{b.fees.halfHour}</div></div>
-                    <div className="stat"><div className="k">Econômica</div><div className="v num">{b.fees.economy}</div></div>
-                  </div> : <p className="foot-note">Indisponível agora.</p>}
-                  {b.mempoolCount != null && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>Mempool: <b>{b.mempoolCount.toLocaleString('pt-BR')}</b> transações aguardando.</p>}
-                </div>
-                <div className="card section-gap">
-                  <div className="eyebrow" style={{ marginBottom: 8 }}>Próximo halving</div>
-                  <div className="trio">
-                    <div className="stat"><div className="k">Faltam (dias)</div><div className="v num">{b.halvingDays != null ? b.halvingDays.toLocaleString('pt-BR') : '—'}</div></div>
-                    <div className="stat"><div className="k">Blocos</div><div className="v num">{b.halvingBlocksLeft != null ? (b.halvingBlocksLeft / 1000).toFixed(0) + 'k' : '—'}</div></div>
-                    <div className="stat"><div className="k">Data est.</div><div className="v num" style={{ fontSize: 14 }}>{b.halvingDate ? dBR(b.halvingDate) : '—'}</div></div>
-                  </div>
-                </div>
-                <p className="foot-note">Dados on-chain: mempool.space + CoinGecko. Ao vivo, sem chave. Não é recomendação de investimento.</p>
-              </>)
-            })()}
+            {tab === 'lab' && <BtcLab />}
           </section>
 
           <section className={`screen ${tab === 'tiger100' ? 'active' : ''}`}>

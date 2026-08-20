@@ -21,8 +21,10 @@ export async function GET() {
   const price = m?.current_price ?? null
   // Mayer Multiple = preço / média móvel 200d (sinal clássico de valuation do BTC)
   let ma200: number | null = null, mayer: number | null = null
+  let priceSeries: number[] = []
   if (chart?.prices?.length) {
     const px = chart.prices.map((p: any) => p[1]).filter((x: number) => x > 0)
+    priceSeries = px
     if (px.length) { ma200 = px.reduce((s: number, x: number) => s + x, 0) / px.length; if (price && ma200) mayer = price / ma200 }
   }
 
@@ -42,7 +44,8 @@ export async function GET() {
     marketCap: m?.market_cap ?? null,
     ath: m?.ath ?? null,
     athChange: m?.ath_change_percentage ?? null,
-    ma200, mayer,
+    ma200, mayer, priceSeries,
+    athPrice: m?.ath ?? null,
     hashrate: hash?.currentHashrate ?? null,          // H/s
     difficulty: hash?.currentDifficulty ?? diff?.difficulty ?? null,
     nextAdjustPct: diff?.difficultyChange ?? null,     // % estimado do próximo reajuste

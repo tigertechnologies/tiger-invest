@@ -649,3 +649,11 @@ select{font-family:'Inter';}
 .mon-chain-r{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-family:'JetBrains Mono';font-size:11px;}
 .mon-chain-r .up{color:var(--green);}
 .mon-chain-r .down{color:var(--red);}
+
+/* ---- BTC Lab (medidor Mayer, legendas) ---- */
+.btc-legend{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap;gap:6px;}
+.btc-gauge{margin-top:12px;}
+.btc-gauge-track{position:relative;display:flex;height:12px;border-radius:999px;overflow:hidden;}
+.btc-z{display:block;}
+.btc-gauge-mark{position:absolute;top:-3px;width:4px;height:18px;border-radius:2px;transform:translateX(-50%);box-shadow:0 0 8px currentColor;}
+.btc-gauge-lbl{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:10px;color:var(--muted);margin-top:6px;}
