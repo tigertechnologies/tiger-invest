@@ -86,6 +86,9 @@ export default function DashboardApp({
   const [coinResults, setCoinResults] = useState<any[] | null>(null)
   const [coinSearching, setCoinSearching] = useState(false)
   const [coinManual, setCoinManual] = useState(false)
+  const [poolCoinQuery, setPoolCoinQuery] = useState('')
+  const [poolCoinResults, setPoolCoinResults] = useState<any[] | null>(null)
+  const [poolCoinSearching, setPoolCoinSearching] = useState(false)
   const [histPrice, setHistPrice] = useState<number | null>(null)
   const [histLoading, setHistLoading] = useState(false)
   const [moveForm, setMoveForm] = useState<any | null>(null)
@@ -649,6 +652,21 @@ export default function DashboardApp({
     setTxForm((prev: any) => ({ ...prev, name: c.name, symbol: c.symbol, cg_id: c.id, img: c.image || '', buy_price: c.price != null ? String(c.price) : prev.buy_price }))
     setCoinQuery(''); setCoinResults(null); setCoinManual(false)
   }
+  // Busca da moeda do PAR 1 no cadastro de pool — grava o ID certo do CoinGecko a partir do nome.
+  useEffect(() => {
+    if (!poolForm) return
+    const q = poolCoinQuery.trim()
+    if (q.length < 2) { setPoolCoinResults(null); return }
+    setPoolCoinSearching(true)
+    const t = setTimeout(() => {
+      fetch(`/api/coinsearch?q=${encodeURIComponent(q)}`).then(r => r.json()).then(d => setPoolCoinResults(d.coins || [])).catch(() => setPoolCoinResults([])).finally(() => setPoolCoinSearching(false))
+    }, 400)
+    return () => clearTimeout(t)
+  }, [poolCoinQuery, poolForm])
+  const pickPoolCoin = (c: any) => {
+    setPoolForm((prev: any) => ({ ...prev, par1: (c.symbol || '').toUpperCase(), par1_cg_id: c.id }))
+    setPoolCoinQuery(''); setPoolCoinResults(null)
+  }
   // Compra retroativa: se a data for passada, busca o preço de mercado daquele dia (sugestão).
   useEffect(() => {
     const cg = txForm?.cg_id, date = txForm?.buy_date
@@ -723,7 +741,7 @@ export default function DashboardApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pools])
 
-  const openPool = (p: Pool | null) => setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), entry_price: '', fees: '', pool_address: '', network: 'base', position_id: '' })
+  const openPool = (p: Pool | null) => { setPoolCoinQuery(''); setPoolCoinResults(null); setPoolForm(p ? { ...p } : { par1: 'ETH', par1_cg_id: 'ethereum', par2: 'USDC', dapp: 'Uniswap v3', rede: 'Base', link: '', aporte: '', current_value: '', low_range: '', high_range: '', entry_date: new Date().toISOString().slice(0, 10), entry_price: '', fees: '', pool_address: '', network: 'base', position_id: '' }) }
 
   const assetRow = (h: Holding) => {
     const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
@@ -1488,9 +1506,28 @@ export default function DashboardApp({
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setPoolForm(null) }}>
             <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
               <h3>{poolForm.id ? 'Editar pool' : 'Nova pool'}</h3>
-              <div className="grid2"><div className="field"><label>Par 1 (volátil)</label><input value={poolForm.par1} onChange={e => setPoolForm({ ...poolForm, par1: e.target.value.toUpperCase() })} placeholder="ETH" /></div><div className="field"><label>ID CoinGecko p/ range</label><input value={poolForm.par1_cg_id} onChange={e => setPoolForm({ ...poolForm, par1_cg_id: e.target.value })} placeholder="ethereum" /></div></div>
-              <div className="grid2"><div className="field"><label>Par 2 (estável)</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div><div className="field"><label>dApp</label><input value={poolForm.dapp} onChange={e => setPoolForm({ ...poolForm, dapp: e.target.value })} placeholder="Uniswap v3" /></div></div>
-              <div className="grid2"><div className="field"><label>Rede</label><input value={poolForm.rede} onChange={e => setPoolForm({ ...poolForm, rede: e.target.value })} placeholder="Base" /></div><div className="field"><label>Data de entrada</label><input type="date" value={poolForm.entry_date} onChange={e => setPoolForm({ ...poolForm, entry_date: e.target.value })} /></div></div>
+              <div className="field"><label>Ativo volátil da pool (Par 1)</label><input value={poolCoinQuery} onChange={e => setPoolCoinQuery(e.target.value)} placeholder="Digite o nome: Bitcoin, Coinbase Wrapped BTC, Ethereum…" /></div>
+              {poolCoinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Buscando…</p>}
+              {poolCoinResults && poolCoinResults.length > 0 && (
+                <div className="card" style={{ padding: 6, marginTop: 6 }}>
+                  {poolCoinResults.map((c: any) => (
+                    <div key={c.id} onClick={() => pickPoolCoin(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px', cursor: 'pointer', borderRadius: 8 }}>
+                      {c.image ? <img src={c.image} alt="" width={24} height={24} style={{ borderRadius: '50%' }} /> : <span className="sym" style={{ width: 24, height: 24, background: 'linear-gradient(145deg,#A855F7,#A855F788)' }}>{c.symbol.slice(0, 3)}</span>}
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{c.name} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{c.symbol}</span></div>{c.rank ? <div style={{ fontSize: 10, color: 'var(--muted)' }}>rank #{c.rank}</div> : null}</div>
+                      <div className="num" style={{ fontSize: 12 }}>{c.price != null ? usd(c.price) : '—'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {poolCoinResults && poolCoinResults.length === 0 && !poolCoinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Nenhuma moeda encontrada — tente outro nome.</p>}
+              {poolForm.par1_cg_id && (
+                <div className="card" style={{ marginTop: 8, background: 'rgba(43,255,198,.08)', border: '1px solid rgba(43,255,198,.3)' }}>
+                  <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: '#2BFFC6' }}>✓ Par 1: <b>{poolForm.par1}</b> · ID <b>{poolForm.par1_cg_id}</b> — preço e range vêm certos do mercado.</p>
+                </div>
+              )}
+              <div className="grid2"><div className="field"><label>Símbolo Par 1</label><input value={poolForm.par1} onChange={e => setPoolForm({ ...poolForm, par1: e.target.value.toUpperCase() })} placeholder="ETH" /></div><div className="field"><label>Par 2 (estável)</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div></div>
+              <div className="grid2"><div className="field"><label>dApp</label><input value={poolForm.dapp} onChange={e => setPoolForm({ ...poolForm, dapp: e.target.value })} placeholder="Uniswap v3" /></div><div className="field"><label>Rede</label><input value={poolForm.rede} onChange={e => setPoolForm({ ...poolForm, rede: e.target.value })} placeholder="Base" /></div></div>
+              <div className="field"><label>Data de entrada</label><input type="date" value={poolForm.entry_date} onChange={e => setPoolForm({ ...poolForm, entry_date: e.target.value })} /></div>
               <div className="grid2"><div className="field"><label>Range LOW (preço)</label><input inputMode="decimal" value={poolForm.low_range} onChange={e => setPoolForm({ ...poolForm, low_range: e.target.value })} /></div><div className="field"><label>Range HIGH (preço)</label><input inputMode="decimal" value={poolForm.high_range} onChange={e => setPoolForm({ ...poolForm, high_range: e.target.value })} /></div></div>
               <div className="field"><label>Preço do {poolForm.par1 || 'ativo'} na entrada (p/ IL)</label><input inputMode="decimal" value={poolForm.entry_price ?? ''} onChange={e => setPoolForm({ ...poolForm, entry_price: e.target.value })} placeholder="ex: 2100" /></div>
               <div className="grid2"><div className="field"><label>Aporte U$</label><input inputMode="decimal" value={poolForm.aporte} onChange={e => setPoolForm({ ...poolForm, aporte: e.target.value })} /></div><div className="field"><label>Saldo atual U$</label><input inputMode="decimal" value={poolForm.current_value} onChange={e => setPoolForm({ ...poolForm, current_value: e.target.value })} /></div></div>
