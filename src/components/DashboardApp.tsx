@@ -60,6 +60,7 @@ export default function DashboardApp({
   const [levels, setLevels] = useState<Level[]>(initialLevels)
   const [levelForm, setLevelForm] = useState<any | null>(null)
   const [alertsOpen, setAlertsOpen] = useState(false)
+  const [sellFeePct, setSellFeePct] = useState(0.1)   // custo de vender (fee+spread) — recuperação de capital usa isto
   const [stockLive, setStockLive] = useState<Record<string, { price: number; ch24: number | null }>>({})
   const [tab, setTab] = useState<Tab>('inicio')
   const [live, setLive] = useState<Record<string, any>>({})
@@ -262,6 +263,7 @@ export default function DashboardApp({
 
   // Watchlist de pools. Cache local imediato + sync com a nuvem (tabela pool_watch) quando logado.
   useEffect(() => { try { const w = JSON.parse(localStorage.getItem('tiger_pool_watch') || '[]'); if (Array.isArray(w)) setWatch(w) } catch { } }, [])
+  useEffect(() => { try { const f = parseFloat(localStorage.getItem('tiger_sell_fee') || ''); if (!isNaN(f) && f >= 0 && f < 10) setSellFeePct(f) } catch { } }, [])
   useEffect(() => {
     if (!userId) return
     // se a tabela ainda não existir (SQL não rodado), o erro é ignorado e segue no modo local
@@ -1242,6 +1244,23 @@ export default function DashboardApp({
           }
           const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
           const custoMedio = h.qty ? h.invested / h.qty : 0, pctInv = t.totalInv ? h.invested / t.totalInv * 100 : 0
+          // ---- CAPITAL RECUPERADO (proteção): dinheiro que já voltou ao caixa via vendas ----
+          // Real, caixa contra caixa. avgCost = custo médio só das compras (igual ao recompute()).
+          const _buys = my.filter(x => (x.move_kind || 'buy') === 'buy')
+          const _buyQty = _buys.reduce((s, x) => s + x.qty, 0)
+          const _avgCost = _buyQty ? _buys.reduce((s, x) => s + x.qty * x.buy_price, 0) / _buyQty : 0
+          const aporteTotal = _avgCost * _buyQty                                  // tudo que você pôs no ativo (US$)
+          const sells = my.filter(x => x.move_kind === 'sell')
+          const recebidoBruto = sells.reduce((s, x) => s + Math.abs(x.qty) * x.buy_price, 0)
+          const recebidoLiq = recebidoBruto * (1 - sellFeePct / 100)            // desconta custo de vender
+          const recuperado = Math.min(recebidoLiq, aporteTotal)                   // não passa de 100% do aporte
+          const recuperadoPct = aporteTotal > 0 ? recuperado / aporteTotal * 100 : 0
+          const faltaRecuperar = Math.max(0, aporteTotal - recebidoLiq)
+          const lucroRealizado = sells.reduce((s, x) => s + Math.abs(x.qty) * (x.buy_price - _avgCost), 0) * (1 - sellFeePct / 100)
+          const jaProtegido = faltaRecuperar <= 1e-6 && aporteTotal > 0
+          // quanto vender AGORA (ao preço vivo) pra zerar o que falta recuperar, já contando o fee da venda:
+          const precoVivo = h.price || 0
+          const qtyRecuperar = (precoVivo > 0 && !jaProtegido) ? Math.min(h.qty, faltaRecuperar / (precoVivo * (1 - sellFeePct / 100))) : 0
           const L = live[h.cg_id], sg = signals[h.cg_id]
           const periodDays = my.length ? daysSince(my.map(x => x.buy_date).sort()[0]) : 0
           // Retorno REAL por janela. Padrao profissional (GIPS/CFA): periodo menor que a janela
@@ -1316,6 +1335,32 @@ export default function DashboardApp({
                   <p className="foot-note" style={{ marginTop: 8 }}>
                     <b>Resultado</b> é o seu ganho/perda real desde a compra. <b>Hoje / 30 dias / 12 meses</b> é o retorno real da posição em cada janela — só aparecem depois que você segura o ativo por esse tempo ({periodDays} {periodDays === 1 ? 'dia' : 'dias'} até agora). Projetar um período curto para "mês" ou "ano" geraria número fictício, então o app espera a janela completar.
                   </p>
+                  {h.kind === 'crypto' && aporteTotal > 0 && (
+                    <div className="card" style={{ marginTop: 14, border: jaProtegido ? '1px solid rgba(74,222,128,.45)' : '1px solid var(--line)', background: jaProtegido ? 'rgba(74,222,128,.08)' : undefined }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                        <div className="eyebrow" style={{ margin: 0 }}>Capital recuperado</div>
+                        <b className="num" style={{ color: jaProtegido ? 'var(--green)' : 'var(--text)' }}>{fmt(recuperadoPct, 0)}%</b>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 6, background: 'rgba(255,255,255,.08)', overflow: 'hidden', marginBottom: 8 }}>
+                        <div style={{ width: `${Math.min(100, recuperadoPct)}%`, height: '100%', background: jaProtegido ? 'var(--green)' : 'linear-gradient(90deg,var(--purple),#f0abfc)', transition: 'width .3s' }} />
+                      </div>
+                      {jaProtegido
+                        ? <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: 'var(--green)' }}><b>Capital 100% recuperado.</b> Você já tirou de volta os {usd(aporteTotal)} que pôs. O que resta no ativo ({usd(v)}) é lucro sobre risco zero.</p>
+                        : <p className="foot-note" style={{ textAlign: 'left', padding: 0 }}>Já voltou ao caixa <b>{usd(recuperado)}</b> dos <b>{usd(aporteTotal)}</b> aportados. Faltam <b>{usd(faltaRecuperar)}</b> pra ficar de graça na posição.</p>}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                        <span className="txtag">realizado <b style={{ color: lucroRealizado >= 0 ? 'var(--green)' : 'var(--red)' }}>{(lucroRealizado >= 0 ? '+' : '−') + usd(Math.abs(lucroRealizado)).slice(1)}</b></span>
+                        <span className="txtag">não realizado <b style={{ color: pl >= 0 ? 'var(--green)' : 'var(--red)' }}>{(pl >= 0 ? '+' : '−') + usd(Math.abs(pl)).slice(1)}</b></span>
+                        <span className="txtag">fee venda <b>{fmt(sellFeePct, 2)}%</b> <span style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => { const s = prompt('Custo de vender (fee + spread) em %. Ex.: 0,1', String(sellFeePct).replace('.', ',')); if (s != null) { const f = parseFloat(s.replace(',', '.')); if (!isNaN(f) && f >= 0 && f < 10) { setSellFeePct(f); try { localStorage.setItem('tiger_sell_fee', String(f)) } catch { } } } }}>✎</span></span>
+                      </div>
+                      {!jaProtegido && qtyRecuperar > 0 && (
+                        <button className="btn" style={{ width: '100%', marginTop: 10 }} onClick={() => setMoveForm({ symbol: h.symbol, name: h.name, cg_id: h.cg_id, color: h.color, dir: 'sell', qty: fmt(qtyRecuperar, qtyRecuperar < 1 ? 6 : 3).replace('.', ','), price: String(precoVivo), note: 'recuperação de capital', buy_date: new Date().toISOString().slice(0, 10), toCash: true, maxQty: h.qty })}>
+                          ↘ Realizar parcial · recuperar capital ({usd(faltaRecuperar)})
+                        </button>
+                      )}
+                      <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8, fontSize: 10, color: 'var(--faint)' }}>Vender ~{fmt(qtyRecuperar, qtyRecuperar < 1 ? 6 : 3)} {h.symbol} ao preço atual traz o que falta ao caixa. Imposto sobre ganho de capital não está incluído — depende da sua faixa mensal de vendas no Brasil.</p>
+                    </div>
+                  )}
+
                   <div className="eyebrow" style={{ marginTop: 18 }}>Movimentos ({my.length})</div>
                   {my.map(x => (<div className="txitem" key={x.id}>
                     <div className="txhead"><span>{dBR(x.buy_date)} · {daysSince(x.buy_date)}d {(x.move_kind === 'to_pool') ? <b style={{ color: 'var(--red)' }}>· SAÍDA → POOL</b> : (x.move_kind === 'from_pool') ? <b style={{ color: 'var(--green)' }}>· RETORNO ← POOL</b> : (x.move_kind === 'sell') ? <b style={{ color: 'var(--red)' }}>· VENDA</b> : ''}</span><b>{fmt(x.qty, Math.abs(x.qty) < 1 ? 5 : 3)} @ {usd(x.buy_price)}</b></div>
