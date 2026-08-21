@@ -110,7 +110,6 @@ export type Pool = {
   entry_price?: number   // preço do par1 na abertura da pool (para estimar IL)
   pool_address?: string; network?: string
   position_id?: string   // NFT ID da posição (p/ sincronizar saldo e taxas automaticamente)
-  pool_version?: string  // 'v3' | 'v4' — define qual leitura on-chain usar
 }
 // Placeholder neutro. Usado apenas como fallback na migração de pool legada
 // (holding -> tabela pools) de contas antigas; nunca como seed de conta nova.
