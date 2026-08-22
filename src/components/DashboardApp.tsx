@@ -880,13 +880,23 @@ export default function DashboardApp({
               const il = (p.entry_price && p.entry_price > 0 && price > 0)
                 ? (() => { const r = price / p.entry_price!; return { chg: (r - 1) * 100, il: (2 * Math.sqrt(r) / (1 + r) - 1) * 100 } })()
                 : null
+              // ---- Decomposição vs HODL (metodologia Revert): separa o que é mercado do que é a pool ----
+              // HODL = valor hoje se tivesse segurado os tokens da entrada (perna estável constante + volátil ajustada por r).
+              // Assume split 50/50 na entrada (padrão de posição centrada). divLoss = pool vs HODL sem fees. resultado = +fees.
+              const hodl = (p.entry_price && p.entry_price > 0 && price > 0)
+                ? (p.aporte / 2) + (p.aporte / 2) * (price / p.entry_price!)
+                : null
+              const divLoss = hodl != null ? (p.current_value - hodl) : null          // perda/ganho por divergência (IL em $), sem fees
+              const resultVsHodl = hodl != null ? (p.current_value + (p.fees || 0) - hodl) : null // o que a pool rendeu vs ter segurado
+              const feeAprLiq = (p.aporte && dias > 0 && divLoss != null)
+                ? ((p.fees || 0) + divLoss) / p.aporte / dias * 365 * 100 : null       // APR líquido (fee + IL) anualizado
               return (<div className="poolcard" key={p.id}>
                 <div className="poolhead">
                   <div className="poolt"><b>{p.par1} / {p.par2}</b><span>{p.dapp} · {p.rede}</span></div>
                   <div className="poolval"><div className="num">{usd(p.current_value)}</div><div className={`num ${pnl >= 0 ? 'up' : 'down'}`}>{pct(pnlp)}</div></div>
                 </div>
                 <div className={`rangestatus ${inRange ? (nearEdge ? 'rs-warn' : 'rs-in') : 'rs-out'}`}>{inRange ? (nearEdge ? '⚠ PERTO DE SAIR DA FAIXA' : '✓ DENTRO DA FAIXA · gerando taxas') : below ? '▼ FORA — abaixo · sem taxas' : above ? '▲ FORA — acima · sem taxas' : 'faixa não definida'}</div>
-                <PoolChart par1={p.par1} par2={p.par2} cgId={p.par1_cg_id} price={price} low={p.low_range} high={p.high_range} currentValue={p.current_value} aporte={p.aporte} entryPrice={p.entry_price} />
+                <PoolChart par1={p.par1} par2={p.par2} cgId={p.par1_cg_id} poolId={p.id} price={price} low={p.low_range} high={p.high_range} currentValue={p.current_value} aporte={p.aporte} entryPrice={p.entry_price} />
                 {pd && has(3) && (<div className="pooltraction">
                   <div className="pt-cell"><span>TVL</span><b>{abbr(pd.tvl)}</b></div>
                   <div className="pt-cell"><span>Vol 24h</span><b>{abbr(pd.vol24)}</b></div>
@@ -896,32 +906,38 @@ export default function DashboardApp({
                 <div style={{ marginTop: 12 }}>
                   <div className="kv"><span className="k">Aporte</span><span className="v num">{usd(p.aporte)}</span></div>
                   <div className="kv"><span className="k">Saldo atual</span><span className="v num">{usd(p.current_value)}</span></div>
-                  <div className="kv"><span className="k">PNL</span><span className={`v num ${pnl >= 0 ? 'up' : 'down'}`}>{(pnl >= 0 ? '+' : '-') + usd(Math.abs(pnl)).slice(1)}</span></div>
                   <div className="kv"><span className="k">Taxas geradas</span><span className="v num up">{'$' + (Math.abs(p.fees || 0) > 0 && Math.abs(p.fees || 0) < 1 ? (p.fees || 0).toLocaleString('pt-BR', { minimumFractionDigits: 5, maximumFractionDigits: 5 }) : fmt(p.fees || 0))}</span></div>
-                  <div className="kv"><span className="k">APR estimado</span><span className="v num">{fmt(apr)}%</span></div>
+                  {resultVsHodl != null
+                    ? (<div className="kv"><span className="k">Resultado da pool (vs HODL)</span><span className={`v num ${resultVsHodl >= 0 ? 'up' : 'down'}`}>{(resultVsHodl >= 0 ? '+' : '−') + usd(Math.abs(resultVsHodl)).slice(1)}</span></div>)
+                    : (<div className="kv"><span className="k">PNL</span><span className={`v num ${pnl >= 0 ? 'up' : 'down'}`}>{(pnl >= 0 ? '+' : '−') + usd(Math.abs(pnl)).slice(1)}</span></div>)}
+                  {divLoss != null && (<div className="kv"><span className="k">Divergência (IL em $)</span><span className={`v num ${divLoss >= 0 ? 'up' : 'down'}`}>{(divLoss >= 0 ? '+' : '−') + usd(Math.abs(divLoss)).slice(1)}</span></div>)}
+                  <div className="kv"><span className="k">Fee APR (bruto)</span><span className="v num">{fmt(apr)}%</span></div>
+                  {feeAprLiq != null && (<div className="kv"><span className="k">APR líquido (fee + IL)</span><span className={`v num ${feeAprLiq >= 0 ? 'up' : 'down'}`}>{fmt(feeAprLiq)}%</span></div>)}
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
                   {il && (<><div className="kv"><span className="k">{p.par1} vs. entrada ({usd(p.entry_price!)})</span><span className={`v num ${il.chg >= 0 ? 'up' : 'down'}`}>{pct(il.chg)}</span></div>
                   <div className="kv"><span className="k">IL estimado (vs. HODL)</span><span className="v num down">{fmt(il.il, 2)}%</span></div></>)}
                 </div>
                 {(() => {
-                  const loss = Math.max(0, (p.aporte || 0) - (p.current_value || 0))     // perda da posição vs aporte
-                  const net = (p.current_value || 0) + (p.fees || 0) - (p.aporte || 0)    // resultado já contando taxas
+                  // A "perda" que as taxas devem cobrir é a DIVERGÊNCIA (IL), não a queda de preço do ativo.
+                  // Se não há preço de entrada, cai no modo antigo (aporte vs saldo).
+                  const loss = divLoss != null ? Math.max(0, -divLoss) : Math.max(0, (p.aporte || 0) - (p.current_value || 0))
+                  const net = resultVsHodl != null ? resultVsHodl : ((p.current_value || 0) + (p.fees || 0) - (p.aporte || 0))
                   const cobriu = net >= 0
                   const cov = loss > 0 ? Math.min(100, (p.fees || 0) / loss * 100) : 100
                   const cor = cobriu ? 'var(--green)' : cov >= 50 ? '#F5A623' : 'var(--red)'
                   return (
                     <div className="card" style={{ marginTop: 12, background: 'rgba(14,8,24,.5)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span className="k" style={{ fontSize: 13 }}>Taxa já cobriu a perda?</span>
+                        <span className="k" style={{ fontSize: 13 }}>Taxa já cobriu a divergência?</span>
                         <b style={{ fontFamily: "'Sora'", fontWeight: 800, color: cor }}>{cobriu ? '✓ SIM' : '✗ AINDA NÃO'}</b>
                       </div>
                       <div style={{ height: 7, borderRadius: 999, background: 'rgba(255,255,255,.08)', marginTop: 10, overflow: 'hidden' }}>
                         <div style={{ height: '100%', width: `${cov}%`, background: cor, borderRadius: 999, transition: 'width .3s' }} />
                       </div>
                       <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>{loss > 0
-                        ? <>Taxas cobriram <b style={{ color: cor }}>{fmt(cov, 0)}%</b> da perda ({usd(p.fees || 0)} de {usd(loss)}). {cobriu ? `Sobra líquida de ${usd(net)}.` : `Faltam ${usd(loss - (p.fees || 0))} em taxa pra empatar.`}</>
-                        : <>Posição no positivo — as taxas ({usd(p.fees || 0)}) são lucro extra sobre o ganho. Resultado com taxas: <b style={{ color: 'var(--green)' }}>+{usd(net).slice(1)}</b>.</>}
-                        {' '}A perda inclui IL + variação de preço do par.</p>
+                        ? <>Taxas cobriram <b style={{ color: cor }}>{fmt(cov, 0)}%</b> da divergência ({usd(p.fees || 0)} de {usd(loss)}). {cobriu ? `Resultado vs HODL: +${usd(net).slice(1)}.` : `Faltam ${usd(loss - (p.fees || 0))} em taxa pra empatar com quem só segurou.`}</>
+                        : <>Pool à frente do HODL — as taxas ({usd(p.fees || 0)}) são ganho extra. Resultado vs HODL: <b style={{ color: 'var(--green)' }}>+{usd(net).slice(1)}</b>.</>}
+                        {' '}Compara com ter segurado os tokens; a queda/alta do preço em si não entra aqui.</p>
                     </div>
                   )
                 })()}
