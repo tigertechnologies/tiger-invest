@@ -767,3 +767,36 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);bo
 @media (prefers-reduced-motion:reduce){
   .screen.active > *,.hero::after,.donut svg,.hero .pill{animation:none !important;}
 }
+
+/* ============================================================
+   REFINO VISUAL v16 — tela carteira (lista de ativos). Aditivo, só estética.
+   ============================================================ */
+
+/* Linhas de ativo: profundidade + hover interativo (toque/mouse) */
+.qrow{transition:transform .18s cubic-bezier(.22,1,.36,1),border-color .18s,box-shadow .18s,background .18s;cursor:pointer;position:relative;overflow:hidden;}
+.qrow:hover{transform:translateY(-2px);border-color:var(--line-strong);
+  box-shadow:0 8px 22px rgba(0,0,0,.38),0 0 18px rgba(168,85,247,.10);}
+.qrow:active{transform:translateY(0) scale(.995);}
+
+/* barra de destaque à esquerda que acende no hover */
+.qrow::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,var(--pink),var(--purple));opacity:0;transition:opacity .18s;}
+.qrow:hover::before{opacity:1;}
+
+/* ícone do ativo ganha leve brilho ao passar */
+.qsym{transition:box-shadow .18s,transform .18s;}
+.qrow:hover .qsym{transform:scale(1.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.2),0 0 14px rgba(168,85,247,.3);}
+
+/* entrada escalonada das linhas ao abrir a carteira */
+.screen.active .qrow{animation:riseIn .45s cubic-bezier(.22,1,.36,1) both;}
+.screen.active .qrow:nth-child(2){animation-delay:.03s;}
+.screen.active .qrow:nth-child(3){animation-delay:.06s;}
+.screen.active .qrow:nth-child(4){animation-delay:.09s;}
+.screen.active .qrow:nth-child(5){animation-delay:.12s;}
+.screen.active .qrow:nth-child(6){animation-delay:.15s;}
+.screen.active .qrow:nth-child(7){animation-delay:.18s;}
+.screen.active .qrow:nth-child(8){animation-delay:.21s;}
+
+@media (prefers-reduced-motion:reduce){
+  .screen.active .qrow{animation:none !important;}
+}
