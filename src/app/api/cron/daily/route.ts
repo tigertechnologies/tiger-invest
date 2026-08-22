@@ -47,10 +47,10 @@ export async function GET(req: Request) {
   try {
     const [{ data: holdings }, { data: pools }] = await Promise.all([
       admin.from('holdings').select('user_id,kind,symbol,cg_id,qty,price,invested,current_value'),
-      admin.from('pools').select('user_id,aporte,current_value'),
+      admin.from('pools').select('id,user_id,aporte,current_value,fees,entry_price,par1_cg_id'),
     ])
     const H = (holdings || []) as any[], P = (pools || []) as any[]
-    const cgIds = Array.from(new Set(H.filter(h => h.cg_id).map(h => h.cg_id)))
+    const cgIds = Array.from(new Set([...H.filter(h => h.cg_id).map(h => h.cg_id), ...P.filter(p => p.par1_cg_id).map(p => p.par1_cg_id)]))
     const [prices, rate] = await Promise.all([cgPrices(cgIds), brlRate()])
 
     const acc: Record<string, { patr: number; custo: number }> = {}
@@ -71,6 +71,20 @@ export async function GET(req: Request) {
       .map(([uid, v]) => ({ user_id: uid, snap_date: today, patrimonio_usd: +v.patr.toFixed(2), custo_usd: +v.custo.toFixed(2), brl_rate: +rate.toFixed(4) }))
     if (rows.length) await admin.from('portfolio_snapshot').upsert(rows, { onConflict: 'user_id,snap_date' })
     result.snapshots = rows.length
+
+    // snapshot POR POOL (para o gráfico de PnL no tempo) — só passa a existir a partir de hoje
+    const poolRows = P
+      .filter(p => p.id && (p.current_value || 0) > 0)
+      .map(p => ({
+        user_id: p.user_id, pool_id: p.id, snap_date: today,
+        current_value: +(p.current_value || 0).toFixed(2),
+        aporte: +(p.aporte || 0).toFixed(2),
+        fees: +(p.fees || 0).toFixed(6),
+        entry_price: +(p.entry_price || 0).toFixed(6),
+        par1_price: +((p.par1_cg_id && prices[p.par1_cg_id]) || 0).toFixed(6),
+      }))
+    if (poolRows.length) await admin.from('pool_snapshot').upsert(poolRows, { onConflict: 'user_id,pool_id,snap_date' })
+    result.poolSnapshots = poolRows.length
   } catch (e: any) { result.snapshotError = String(e?.message || e) }
 
   // ---------- 2) ALERTAS DE POOL VIGIADA (dispara quando entra em bom momento) ----------
