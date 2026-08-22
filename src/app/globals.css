@@ -619,6 +619,18 @@ select{font-family:'Inter';}
 .pcr{margin-top:12px;}
 .pcr-sec{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;}
 .pcr-range{width:100%;height:40px;display:block;}
+/* distribuição de liquidez em barras (estilo Revert) */
+.pcr-liq,.pcr-bigliq{position:relative;width:100%;display:flex;align-items:flex-end;gap:1px;background:rgba(0,0,0,.2);border:1px solid var(--line);border-radius:10px;padding:4px;box-sizing:border-box;}
+.pcr-liq{height:44px;}
+.pcr-bigliq{height:120px;margin-top:4px;}
+.pcr-bar{flex:1;border-radius:2px 2px 0 0;align-self:flex-end;}
+.pcr-bar.in{background:linear-gradient(180deg,#2BFFC6,#A855F7);opacity:.85;}
+.pcr-bar.out{background:rgba(255,255,255,.10);}
+.pcr-bar.act{outline:1.5px solid #fff;outline-offset:-1px;opacity:1;}
+.pcr-cur{position:absolute;top:2px;bottom:2px;width:2px;background:var(--pink-bright);box-shadow:0 0 6px var(--pink-bright);border-radius:2px;transform:translateX(-1px);}
+.pcr-tabs{display:flex;gap:6px;margin-bottom:8px;}
+.pcr-tabs button{flex:1;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--muted);font-family:'Sora';font-weight:600;font-size:11px;padding:7px;border-radius:8px;cursor:pointer;}
+.pcr-tabs button.on{background:linear-gradient(90deg,var(--purple),var(--pink-bright));color:#fff;border-color:transparent;}
 .pcr-axis{display:flex;justify-content:space-between;font-family:'JetBrains Mono';font-size:11px;color:var(--muted);margin-top:5px;}
 .pcr-axis .in{color:#2BFFC6;font-weight:700;}
 .pcr-axis .out{color:#FF4D6D;font-weight:700;}
