@@ -1216,7 +1216,7 @@ export default function DashboardApp({
                     </div>
                   ))}
                 </div>
-                <p className="foot-note"><b>Tiger 100</b> = 100 maiores por market cap, ponderadas por capitalização com <b>teto de 15%</b> (pra BTC/ETH não dominarem) e <b>tilt de ±15%</b> pela performance de 7 dias. Nível base 1.000. Fonte: CoinGecko. Não é recomendação.</p>
+                <p className="foot-note"><b>Tiger 100</b> = 100 maiores por market cap, ponderadas por capitalização com <b>teto de 15%</b> (pra BTC/ETH não dominarem) e <b>tilt de ±15%</b> pela performance de 7 dias. Nível base 1.000. Fonte: CoinGecko. O gráfico usa o histórico real registrado diariamente; o trecho anterior ao início do registro é uma reconstrução aproximada (12 maiores, com o mesmo teto de 15%). Não é recomendação.</p>
               </>)
             })()}
             {t100 && !t100.count && !t100Loading && <p className="foot-note">Índice indisponível agora — tente novamente em instantes.</p>}
