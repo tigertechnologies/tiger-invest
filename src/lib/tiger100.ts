@@ -23,13 +23,21 @@ export async function tiger100History(days: number): Promise<Record<string, numb
         return out
       } catch { return {} }
     }))
-    // soma as capitalizações por data (apenas datas presentes na âncora = maior série)
+    // soma as capitalizações por data aplicando o MESMO teto de 15% do índice ao vivo,
+    // pra que a linha histórica siga a mesma regra do número ao vivo (senão o BTC domina só no gráfico).
     const anchor = seriesList.reduce((a, b) => Object.keys(b).length > Object.keys(a).length ? b : a, {})
     const totals: Record<string, number> = {}
     for (const date of Object.keys(anchor)) {
-      let sum = 0, ok = true
-      for (const s of seriesList) { const v = s[date]; if (v == null) { ok = false; break } sum += v }
-      if (ok && sum > 0) totals[date] = sum
+      const caps: number[] = []
+      let ok = true
+      for (const s of seriesList) { const v = s[date]; if (v == null) { ok = false; break } caps.push(v) }
+      if (!ok || !caps.length) continue
+      const rawTotal = caps.reduce((a, b) => a + b, 0)
+      if (rawTotal <= 0) continue
+      // aplica teto de 15% no peso de cada moeda e re-soma o total efetivo (mcap ajustado)
+      const capped = caps.map(mc => Math.min(mc / rawTotal, CAP))
+      const sumCapped = capped.reduce((a, b) => a + b, 0)
+      totals[date] = rawTotal * sumCapped   // total efetivo sob o teto — cresce/cai como o índice real
     }
     const dates = Object.keys(totals).sort()
     if (dates.length < 2) return {}
