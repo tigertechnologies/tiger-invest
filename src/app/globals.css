@@ -711,3 +711,59 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);bo
 
 /* Transição suave de entrada de conteúdo carregado */
 .fade-in{animation:fade .35s ease;}
+
+/* ============================================================
+   REFINO VISUAL v16 — tela início (aditivo, só estética; não altera dados)
+   Identidade roxo/neon mantida; foco em profundidade, hover e entrada suave.
+   ============================================================ */
+
+/* Entrada escalonada dos blocos da tela ativa */
+.screen.active > .hero{animation:riseIn .5s cubic-bezier(.22,1,.36,1) both;}
+.screen.active > .card,.screen.active > .trio,.screen.active > .eyebrow{animation:riseIn .5s cubic-bezier(.22,1,.36,1) both;}
+.screen.active > *:nth-child(2){animation-delay:.05s;}
+.screen.active > *:nth-child(3){animation-delay:.10s;}
+.screen.active > *:nth-child(4){animation-delay:.15s;}
+.screen.active > *:nth-child(5){animation-delay:.20s;}
+.screen.active > *:nth-child(6){animation-delay:.25s;}
+@keyframes riseIn{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
+
+/* Hero: brilho vivo girando sutilmente atrás do valor */
+.hero::after{content:"";position:absolute;top:-40%;right:-20%;width:60%;height:180%;z-index:0;
+  background:radial-gradient(circle,rgba(255,46,154,.16),transparent 62%);
+  pointer-events:none;animation:heroGlow 7s ease-in-out infinite;}
+@keyframes heroGlow{0%,100%{opacity:.5;transform:translate(0,0) scale(1);}50%{opacity:.9;transform:translate(-8%,6%) scale(1.12);}}
+.hero-value{transition:text-shadow .4s;}
+
+/* hero-mini e stat: profundidade + hover interativo */
+.hero-mini,.stat{transition:transform .2s cubic-bezier(.22,1,.36,1),border-color .2s,box-shadow .2s;}
+.hero-mini:hover,.stat:hover{transform:translateY(-3px);border-color:var(--line-strong);
+  box-shadow:0 10px 26px rgba(0,0,0,.4),0 0 20px rgba(168,85,247,.12);}
+
+/* stat-cards: fina linha de destaque no topo (acende no hover) */
+.stat{position:relative;overflow:hidden;}
+.stat::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--pink),var(--purple),var(--cyan));
+  opacity:.35;transition:opacity .2s;}
+.stat:hover::before{opacity:1;}
+
+/* Donut: brilho pulsante e leve realce */
+.donut svg{transition:filter .4s;animation:donutGlow 5s ease-in-out infinite;}
+@keyframes donutGlow{0%,100%{filter:drop-shadow(0 0 7px rgba(255,46,154,.30));}50%{filter:drop-shadow(0 0 14px rgba(168,85,247,.40));}}
+.leg{transition:transform .15s;} .leg:hover{transform:translateX(3px);}
+
+/* Cards: realce de borda no hover (interatividade sutil) */
+.card{transition:border-color .25s,box-shadow .25s;}
+.card:hover{border-color:var(--line-strong);}
+
+/* big-kv: linha acende suavemente ao passar o mouse */
+.big-kv{transition:background .2s;border-radius:8px;padding-left:8px;padding-right:8px;margin-left:-8px;margin-right:-8px;}
+.big-kv:hover{background:rgba(168,85,247,.06);}
+
+/* Pill do hero com leve respiração */
+.hero .pill{animation:pillBreath 3.5s ease-in-out infinite;}
+@keyframes pillBreath{0%,100%{transform:scale(1);}50%{transform:scale(1.03);}}
+
+/* Respeita quem prefere menos movimento (acessibilidade) */
+@media (prefers-reduced-motion:reduce){
+  .screen.active > *,.hero::after,.donut svg,.hero .pill{animation:none !important;}
+}
