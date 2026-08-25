@@ -60,6 +60,7 @@ export default function DashboardApp({
   const [levels, setLevels] = useState<Level[]>(initialLevels)
   const [levelForm, setLevelForm] = useState<any | null>(null)
   const [alertsOpen, setAlertsOpen] = useState(false)
+  const [seenAlerts, setSeenAlerts] = useState<string[]>([])
   const [sellFeePct, setSellFeePct] = useState(0.1)   // custo de vender (fee+spread) — recuperação de capital usa isto
   const [stockLive, setStockLive] = useState<Record<string, { price: number; ch24: number | null }>>({})
   const [tab, setTab] = useState<Tab>('inicio')
@@ -419,11 +420,23 @@ export default function DashboardApp({
       if (!error && Array.isArray(data)) setPoolAlerts(data.map((a: any) => ({ id: 'pa' + a.id, _row: a.id, tone: 'buy', icon: '💧', title: `Pool vigiada: ${a.name}`, text: a.message })))
     }, () => { })
   }, [userId, supabase])
+  // hidrata a lista de alertas já vistos
+  useEffect(() => { try { const s = JSON.parse(localStorage.getItem('tiger_seen_alerts') || '[]'); if (Array.isArray(s)) setSeenAlerts(s) } catch { } }, [])
+  // poda: mantém em "visto" só o que ainda está ativo — alerta que sumiu volta a notificar se reaparecer
   useEffect(() => {
-    if (!alertsOpen || !poolAlerts.length) return
-    const ids = poolAlerts.map(a => a._row).filter(Boolean)
-    if (ids.length) supabase.from('pool_alert').update({ seen: true }).in('id', ids).then(() => { }, () => { })
-  }, [alertsOpen, poolAlerts, supabase])
+    const active = new Set([...poolAlerts.map(a => a.id), ...alerts.map(a => a.id)])
+    setSeenAlerts(prev => { const nx = prev.filter(id => active.has(id)); if (nx.length !== prev.length) { try { localStorage.setItem('tiger_seen_alerts', JSON.stringify(nx)) } catch { } ; return nx } return prev })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poolAlerts, alerts])
+  // ao abrir o painel: marca tudo como visto (some do contador) e confirma os de pool no banco
+  useEffect(() => {
+    if (!alertsOpen) return
+    const ids = [...poolAlerts.map(a => a.id), ...alerts.map(a => a.id)]
+    setSeenAlerts(prev => { const nx = Array.from(new Set([...prev, ...ids])); try { localStorage.setItem('tiger_seen_alerts', JSON.stringify(nx)) } catch { } ; return nx })
+    const rows = poolAlerts.map(a => a._row).filter(Boolean)
+    if (rows.length) supabase.from('pool_alert').update({ seen: true }).in('id', rows).then(() => { }, () => { })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertsOpen])
   useEffect(() => {
     if (!userId) return
     supabase.from('portfolio_snapshot').select('snap_date,patrimonio_usd,custo_usd,brl_rate').order('snap_date').then(({ data, error }) => {
@@ -705,6 +718,7 @@ export default function DashboardApp({
   const d1 = pnlDelta(1), d7 = pnlDelta(7), d30 = pnlDelta(30)
   const histDays = snaps.length ? Math.max(1, Math.round((Date.now() - new Date(snaps[0].snap_date + 'T00:00:00').getTime()) / 86400000)) : 0
   const allAlerts = [...poolAlerts, ...alerts]
+  const unseenCount = allAlerts.filter(a => !seenAlerts.includes(a.id)).length
   const distrib = [
     { n: 'Cripto', v: cryptoVal, c: '#FF2E9A' },
     { n: 'Ações/ETFs', v: stockVal, c: '#7C5CFF' },
@@ -845,7 +859,7 @@ export default function DashboardApp({
           <div className="mark" aria-hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.3L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.7L12 2z" /></svg></div>
           <div className="brand"><b>Tiger Invest</b><span>Controle de Ativos</span></div>
           <div className="top-actions">
-            <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{allAlerts.length > 0 && <span className="bell-badge">{allAlerts.length}</span>}</button>
+            <button className="bell" onClick={() => setAlertsOpen(true)} aria-label="Alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>{unseenCount > 0 && <span className="bell-badge">{unseenCount}</span>}</button>
             <button className="logout" style={{ borderColor: 'rgba(43,255,198,.5)', color: '#2BFFC6' }} onClick={() => router.push('/indicacoes')}>Indicar</button>
             {isAdmin && <button className="logout" style={{ borderColor: 'rgba(255,176,32,.5)', color: '#FFB020' }} onClick={() => router.push('/admin')}>Admin</button>}
             <div className="top-date">{userEmail.split('@')[0]}<b>ao vivo</b></div><button className="logout" onClick={signOut}>Sair</button>
@@ -1213,6 +1227,23 @@ export default function DashboardApp({
                         <span style={{ fontWeight: 600, fontSize: 13.5 }}>{h.symbol} <span style={{ color: 'var(--faint)', fontWeight: 400, fontSize: 11 }}>{h.name}</span></span>
                         <span className="num" style={{ fontSize: 12, color: gapColor }}>{gapLabel}{fmt(Math.abs(gap), 1)}%</span>
                       </div>
+                      {(() => {
+                        if (h.kind !== 'crypto' || !h.cg_id) return null
+                        const sg = signals[h.cg_id]
+                        const below = gap < -0.5   // real abaixo da meta = falta comprar
+                        if (!sg && !sigTried) return <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--faint)' }}>analisando momento…</div>
+                        if (!sg) return null
+                        const tone = sg.verdict.tone   // buy | sell | neutral
+                        const c = tone === 'buy' ? 'var(--green)' : tone === 'sell' ? 'var(--red)' : '#F5A623'
+                        const label = tone === 'buy' ? '▲ MOMENTO DE APORTAR' : tone === 'sell' ? '▼ ESPERAR / REALIZAR' : '● CAUTELA'
+                        const dcaHint = below && tone !== 'sell' ? ' · abaixo da meta, bom p/ DCA' : (!below && tone === 'buy' ? ' · já na meta' : '')
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 7 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: c, background: `${c}1a`, border: `1px solid ${c}55`, padding: '3px 9px', borderRadius: 999 }}><span style={{ width: 6, height: 6, borderRadius: 999, background: c, boxShadow: `0 0 7px ${c}` }} />{label}</span>
+                            <span style={{ fontSize: 10, color: 'var(--faint)' }}>{dcaHint}</span>
+                          </div>
+                        )
+                      })()}
                       <div className="metabar" style={{ marginTop: 8 }}>
                         <div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%`, ...(cashSurplus ? { background: 'linear-gradient(90deg,#12b981,var(--green))', boxShadow: '0 0 12px rgba(43,255,154,.5)' } : {}) }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div>
                         <div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {fmt(h.meta_pct, 1)}%</span></div>
@@ -1836,10 +1867,10 @@ export default function DashboardApp({
               <div className="sheet-scroll">
                 <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ width: 22, height: 22 }}><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg>Alertas</h3>
                 {allAlerts.length === 0 && <p className="foot-note" style={{ marginTop: 18 }}>Nenhum alerta agora. Você é avisado quando o preço bate num nível seu, no alvo/stop de uma compra, ou quando uma pool sai do range.</p>}
-                {allAlerts.map(a => (
-                  <div className={`alert-item alert-${a.tone}`} key={a.id}>
+                {allAlerts.slice().sort((a, b) => (seenAlerts.includes(a.id) ? 1 : 0) - (seenAlerts.includes(b.id) ? 1 : 0)).map(a => (
+                  <div className={`alert-item alert-${a.tone}`} key={a.id} style={seenAlerts.includes(a.id) ? { opacity: .6 } : undefined}>
                     <div className="alert-ic">{a.icon}</div>
-                    <div className="alert-t"><b>{a.title}</b><span>{a.text}</span></div>
+                    <div className="alert-t"><b>{a.title}{!seenAlerts.includes(a.id) && <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--pink-bright)', fontFamily: "'JetBrains Mono'", verticalAlign: 'middle' }}>● NOVO</span>}</b><span>{a.text}</span></div>
                   </div>
                 ))}
                 <div style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setAlertsOpen(false)}>Fechar</button></div>
