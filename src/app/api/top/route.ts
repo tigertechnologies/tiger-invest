@@ -14,7 +14,8 @@ export async function GET() {
     const coins = (Array.isArray(arr) ? arr : []).map((c: any) => ({
       id: c.id, symbol: (c.symbol || '').toUpperCase(), name: c.name, img: c.image,
       usd: c.current_price ?? 0, ch24: c.price_change_percentage_24h ?? null, rank: c.market_cap_rank ?? null,
-    }))
+      mcap: c.market_cap ?? 0,
+    })).sort((a: any, b: any) => (b.mcap || 0) - (a.mcap || 0))
     return NextResponse.json({ coins })
   } catch {
     return NextResponse.json({ coins: [] })

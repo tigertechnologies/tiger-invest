@@ -8,11 +8,6 @@ const MAJORS = new Set(['btc', 'eth', 'wbtc', 'weth', 'steth', 'wsteth', 'wbeth'
 // principais memecoins por id (confiável, sem depender de categoria)
 const MEME_IDS = ['dogecoin', 'shiba-inu', 'pepe', 'dogwifcoin', 'bonk', 'floki', 'based-brett', 'popcat', 'mog-coin', 'spx6900', 'book-of-meme', 'pudgy-penguins', 'cat-in-a-dogs-world', 'gigachad-2']
 
-// redes suportadas no filtro de pools (GeckoTerminal)
-const POOL_NETWORKS: Record<string, string> = {
-  all: '', eth: 'eth', solana: 'solana', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', polygon: 'polygon_pos',
-}
-
 function mapCoin(c: any) {
   return {
     id: c.id, symbol: (c.symbol || '').toUpperCase(), name: c.name, image: c.image,
@@ -21,14 +16,12 @@ function mapCoin(c: any) {
   }
 }
 async function markets(qs: string) { const r = await fetch(`${CG}/coins/markets?${qs}`, { next: { revalidate: 180 } }); if (!r.ok) return []; const j = await r.json(); return Array.isArray(j) ? j : [] }
-async function gecko(url: string) { const r = await fetch(url, { next: { revalidate: 180 }, headers: { accept: 'application/json' } }); if (!r.ok) return null; return await r.json() }
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const netKey = (url.searchParams.get('net') || 'all').toLowerCase()
-  const network = POOL_NETWORKS[netKey] ?? ''
 
-  const out: any = { top: [], alts: [], memes: [], pools: [], net: netKey }
+  const out: any = { top: [], alts: [], memes: [], net: netKey }
 
   // 1) TOP — maiores por market cap (sem stablecoins)
   try {
@@ -51,27 +44,6 @@ export async function GET(req: Request) {
       const s = c.symbol.toLowerCase()
       return !STABLE.has(s) && !MAJORS.has(s) && !topIds.has(c.id) && !memeIds.has(c.id)
     }).slice(0, 10)
-  } catch {}
-
-  // 4) POOLS — por rede escolhida (ou trending geral)
-  try {
-    const base = network
-      ? `https://api.geckoterminal.com/api/v2/networks/${network}/trending_pools?page=1`
-      : `https://api.geckoterminal.com/api/v2/networks/trending_pools?page=1`
-    let d = await gecko(base)
-    if (!d?.data?.length && !network) d = await gecko('https://api.geckoterminal.com/api/v2/networks/eth/trending_pools?page=1')
-    out.pools = (d?.data || []).map((p: any) => {
-      const a = p.attributes || {}; const net = (p.id || '').split('_')[0]
-      return { name: a.name || '', network: net, vol24: parseFloat(a.volume_usd?.h24 || '0'), ch24: parseFloat(a.price_change_percentage?.h24 || '0'), tvl: parseFloat(a.reserve_in_usd || '0') }
-    })
-      .filter((x: any) => {
-        const parts = (x.name || '').toUpperCase().split('/').map((z: string) => z.trim().split(' ')[0])
-        const BLUE = ['WETH', 'ETH', 'WBTC', 'BTC', 'CBBTC', 'SOL', 'WSOL', 'USDC', 'USDT', 'DAI', 'WBNB', 'BNB', 'MATIC', 'ARB', 'OP', 'AVAX', 'LINK']
-        const hasBlue = parts.some((z: string) => BLUE.includes(z))
-        return x.tvl >= 250000 && Math.abs(x.ch24) < 60 && hasBlue
-      })
-      .sort((x: any, y: any) => y.vol24 - x.vol24)
-      .slice(0, 12)
   } catch {}
 
   return NextResponse.json(out)

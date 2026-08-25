@@ -68,10 +68,8 @@ export default function DashboardApp({
   const [signals, setSignals] = useState<Record<string, Signal>>({})
   const [sigTried, setSigTried] = useState(false)
   const [radar, setRadar] = useState<any | null>(null)
-  const [radarSeg, setRadarSeg] = useState<'top' | 'alts' | 'memes' | 'pools'>('top')
+  const [radarSeg, setRadarSeg] = useState<'top' | 'alts' | 'memes'>('top')
   const [radarLoading, setRadarLoading] = useState(false)
-  const [poolNet, setPoolNet] = useState('all')
-  const [poolsLoading, setPoolsLoading] = useState(false)
   const [radarDetail, setRadarDetail] = useState<any | null>(null)
   const [radarSig, setRadarSig] = useState<Signal | null>(null)
   const [radarSigLoading, setRadarSigLoading] = useState(false)
@@ -80,6 +78,7 @@ export default function DashboardApp({
   const [editDraft, setEditDraft] = useState<Holding | null>(null)
   const [cashInput, setCashInput] = useState('')
   const [assetEdit, setAssetEdit] = useState<any | null>(null)
+  const [metaForm, setMetaForm] = useState<any | null>(null)
   const [txForm, setTxForm] = useState<any | null>(null)
   const [txEdit, setTxEdit] = useState<any | null>(null)
   const [coinQuery, setCoinQuery] = useState('')
@@ -140,9 +139,10 @@ export default function DashboardApp({
   const [ideas, setIdeas] = useState<any[] | null>(null)
   const [ideasNet, setIdeasNet] = useState('all')
   const [ideasLoading, setIdeasLoading] = useState(false)
-  const [passiveOnly, setPassiveOnly] = useState(false)
   const [watchOnly, setWatchOnly] = useState(false)
   const [watch, setWatch] = useState<string[]>([])
+  const [watchData, setWatchData] = useState<Record<string, any>>({})  // cache do card de cada pool vigiada (p/ nunca sumir)
+  const [watchRefreshing, setWatchRefreshing] = useState(false)
   const [expandedIdea, setExpandedIdea] = useState<string | null>(null)
   const [calc, setCalc] = useState<any | null>(null)
 
@@ -242,12 +242,6 @@ export default function DashboardApp({
     }
   }, [tab, radar, radarLoading])
 
-  const loadPoolsNet = (net: string) => {
-    if (net === poolNet && radar?.pools) return
-    setPoolNet(net); setPoolsLoading(true)
-    fetch(`/api/radar?net=${net}`).then(r => r.json()).then(d => setRadar((prev: any) => ({ ...(prev || {}), pools: d.pools || [] }))).catch(() => {}).finally(() => setPoolsLoading(false))
-  }
-
   const loadIdeas = (net: string) => {
     setIdeasNet(net); setIdeasLoading(true)
     fetch(`/api/poolideas?net=${net}`).then(r => r.json()).then(d => setIdeas(d.ideas || [])).catch(() => setIdeas([])).finally(() => setIdeasLoading(false))
@@ -266,6 +260,9 @@ export default function DashboardApp({
 
   // Watchlist de pools. Cache local imediato + sync com a nuvem (tabela pool_watch) quando logado.
   useEffect(() => { try { const w = JSON.parse(localStorage.getItem('tiger_pool_watch') || '[]'); if (Array.isArray(w)) setWatch(w) } catch { } }, [])
+  // cache do card completo de cada pool vigiada — garante que a pool aparece mesmo se sair do ranking/rede atual
+  useEffect(() => { try { const d = JSON.parse(localStorage.getItem('tiger_pool_watch_data') || '{}'); if (d && typeof d === 'object') setWatchData(d) } catch { } }, [])
+  const persistWatchData = (d: Record<string, any>) => { setWatchData(d); try { localStorage.setItem('tiger_pool_watch_data', JSON.stringify(d)) } catch { } }
   useEffect(() => { try { const f = parseFloat(localStorage.getItem('tiger_sell_fee') || ''); if (!isNaN(f) && f >= 0 && f < 10) setSellFeePct(f) } catch { } }, [])
   useEffect(() => {
     if (!userId) return
@@ -284,11 +281,38 @@ export default function DashboardApp({
     const nx = had ? watch.filter(x => x !== k) : [...watch, k]
     setWatch(nx)
     try { localStorage.setItem('tiger_pool_watch', JSON.stringify(nx)) } catch { }
+    // guarda/remove o card completo no cache — é o que garante que a pool não some enquanto vigiada
+    const nd = { ...watchData }
+    if (had) delete nd[k]; else nd[k] = it
+    persistWatchData(nd)
     if (userId) {
       if (had) supabase.from('pool_watch').delete().eq('pool_key', k).then(() => { }, () => { })
       else supabase.from('pool_watch').upsert({ user_id: userId, pool_key: k, name: it.name, network: it.network, dex: it.dex }, { onConflict: 'user_id,pool_key' }).then(() => { }, () => { })
     }
   }
+  // sempre que um lote de ideias carrega, atualiza o cache das que estão vigiadas (mantém os dados frescos)
+  useEffect(() => {
+    if (!ideas || !ideas.length || !watch.length) return
+    let changed = false; const nd = { ...watchData }
+    for (const it of ideas) { const k = keyOf(it); if (watch.includes(k)) { nd[k] = it; changed = true } }
+    if (changed) persistWatchData(nd)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ideas])
+  // ao abrir "Vigiando", busca todas as redes p/ refrescar as pools vigiadas que saíram da rede atual
+  const refreshWatched = useCallback(async () => {
+    if (!watch.length) return
+    setWatchRefreshing(true)
+    try {
+      const d = await fetch('/api/poolideas?net=all').then(r => r.json())
+      const list: any[] = d?.ideas || []
+      if (list.length) {
+        const nd = { ...watchData }
+        for (const it of list) { const k = keyOf(it); if (watch.includes(k)) nd[k] = it }
+        persistWatchData(nd)
+      }
+    } catch { } finally { setWatchRefreshing(false) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch, watchData])
 
   useEffect(() => {
     const syms = Array.from(new Set(holdings.filter(h => h.kind === 'stock').map(h => h.symbol)))
@@ -501,8 +525,27 @@ export default function DashboardApp({
   async function saveEdit() { if (!editDraft?.id) return; await supabase.from('holdings').update({ current_value: num(cashInput) }).eq('id', editDraft.id); setEditDraft(null); await refetch() }
   const openAssetEdit = (h: Holding) => setAssetEdit({ id: h.id, name: h.name, symbol: h.symbol, cg_id: h.cg_id, meta_pct: String(h.meta_pct ?? '') })
   async function saveAssetEdit() { const f = assetEdit; if (!f?.id) return; await supabase.from('holdings').update({ name: f.name, cg_id: f.cg_id, meta_pct: num(f.meta_pct) }).eq('id', f.id); setAssetEdit(null); setDetail(null); await refetch() }
+
+  // ---- METAS: definir/editar/excluir a meta (% ideal) de cada ativo ----
+  const openMeta = (h?: Holding) => setMetaForm(h
+    ? { id: h.id, symbol: h.symbol, meta_pct: String(h.meta_pct || '').replace('.', ','), isNew: false }
+    : { id: '', symbol: '', meta_pct: '', isNew: true })
+  async function saveMeta() {
+    const f = metaForm; if (!f) return
+    const id = f.id; if (!id) { flash('Escolha um ativo primeiro', 'err'); return }
+    const v = num(f.meta_pct)
+    if (v < 0 || v > 100) { flash('A meta deve ficar entre 0% e 100%', 'err'); return }
+    await supabase.from('holdings').update({ meta_pct: v }).eq('id', id)
+    setMetaForm(null); await refetch(); flash('Meta salva', 'ok')
+  }
+  async function removeMeta(h: Holding) {
+    if (!h.id) return
+    await supabase.from('holdings').update({ meta_pct: 0 }).eq('id', h.id)
+    await refetch(); flash('Meta removida', 'ok')
+  }
   const fdate = (f: Flow) => f.move_date || (f.created_at ? f.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))
   const abbr = (n: number) => { const a = Math.abs(n); return '$' + (a >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (n / 1e3).toFixed(0) + 'K' : n.toFixed(0)) }
+  const abbrMC = (n: number) => { const a = Math.abs(n); return '$' + (a >= 1e12 ? (n / 1e12).toFixed(2) + 'T' : a >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e3).toFixed(0) + 'K') }
   async function saveFlow() { const f = flowForm; if (!f) return; const payload = { user_id: userId, kind: f.kind, amount: num(f.amount), move_date: f.move_date }; if (f.id) await supabase.from('flows').update(payload).eq('id', f.id); else await supabase.from('flows').insert(payload); setFlowForm(null); await refetch() }
   async function delFlow(id: string) { await supabase.from('flows').delete().eq('id', id); setFlowForm(null); await refetch() }
 
@@ -816,9 +859,9 @@ export default function DashboardApp({
 
           {/* COTAÇÃO */}
           <section className={`screen ${tab === 'cotacao' ? 'active' : ''}`}>
-            <div className="eyebrow">Cotação ao vivo · CoinGecko</div>
+            <div className="eyebrow">Cotação ao vivo · CoinGecko <span style={{ color: 'var(--faint)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· toque num ativo seu p/ análise</span></div>
             {priced.filter(h => h.kind === 'crypto' && h.cg_id).sort((a, b) => valOf(b) - valOf(a)).map(h => { const L = live[h.cg_id]; return (
-              <div className="qrow" key={h.id}>
+              <div className="qrow" key={h.id} style={{ cursor: 'pointer' }} onClick={() => setDetail(holdings.find(x => x.id === h.id) || h)}>
                 <div className="qsym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{L?.img ? <img src={L.img} alt="" /> : h.symbol.slice(0, 3)}</div>
                 <div className="qname"><b>{h.name}</b><span>{h.symbol}</span>{signals[h.cg_id] && (<span className={`sigbadge sig-${signals[h.cg_id].verdict.tone}`} style={{ marginTop: 4, marginLeft: 8, display: 'inline-flex' }}>{signals[h.cg_id].verdict.tone === 'buy' ? '▲ COMPRA' : signals[h.cg_id].verdict.tone === 'sell' ? '▼ VENDA' : '● CAUTELA'}</span>)}</div>
                 <div className="qprice"><div className="p">{L?.usd ? usd(L.usd) : usd(h.price)}</div><div className="qchg" style={{ color: chColor(L?.ch24) }}>{chTxt(L?.ch24)} 24h</div></div>
@@ -840,10 +883,10 @@ export default function DashboardApp({
 
             <div className="qsection">Top 50 · market cap</div>
             {top50Loading && <div>{[0,1,2,3,4].map(i => <div key={i} className="skel skel-row" style={{ height: 58, borderRadius: 14, marginBottom: 9 }} />)}</div>}
-            {top50 && top50.map((c: any) => (
+            {top50 && top50.slice().sort((a: any, b: any) => (b.mcap || 0) - (a.mcap || 0)).map((c: any, i: number) => (
               <div className="qrow" key={c.id}>
                 <div className="qsym" style={{ background: '#1a1226' }}>{c.img ? <img src={c.img} alt="" /> : c.symbol.slice(0, 3)}</div>
-                <div className="qname"><b><span style={{ color: 'var(--faint)', fontFamily: "'JetBrains Mono'", fontSize: 12 }}>{c.rank}. </span>{c.name}</b><span>{c.symbol}</span></div>
+                <div className="qname"><b><span style={{ color: 'var(--faint)', fontFamily: "'JetBrains Mono'", fontSize: 12 }}>{i + 1}. </span>{c.name}</b><span>{c.symbol} · MC {abbrMC(c.mcap || 0)}</span></div>
                 <div className="qprice"><div className="p">{usd(c.usd)}</div><div className="qchg" style={{ color: chColor(c.ch24) }}>{chTxt(c.ch24)} 24h</div></div>
               </div>
             ))}
@@ -957,28 +1000,29 @@ export default function DashboardApp({
                 <button className="btn" style={{ maxWidth: 240, margin: '0 auto' }} onClick={() => setUpgrade({ tier: 2, feature: 'Onde abrir pool' })}>Liberar no TIGER PRO →</button>
               </div>
             ) : (() => {
-              const shown = (ideas || []).filter((it: any) => (!passiveOnly || !it.concentrated) && (!watchOnly || watch.includes(keyOf(it))))
+              // Vigiando: monta a lista a partir das chaves vigiadas (ideias frescas OU cache) — nunca some.
+              // Caso normal: usa as ideias da rede escolhida (backend já entrega só V3 concentrada).
+              const shown = watchOnly
+                ? watch.map(k => (ideas || []).find((it: any) => keyOf(it) === k) || watchData[k]).filter(Boolean)
+                : (ideas || [])
               return (<>
-              <div className="niche-h">Ranking pela <b>Nota de Yield</b> — retorno ajustado ao risco. Toque num card para os detalhes.</div>
-              <div className="netbar">
+              <div className="niche-h">Ranking pela <b>Nota de Yield</b> — retorno ajustado ao risco. Toque num card para os detalhes. Só pools <b>concentradas V3</b>.</div>
+              {!watchOnly && <div className="netbar">
                 {([['all', '🏆 Todas'], ['eth', 'Ethereum'], ['base', 'Base'], ['arbitrum', 'Arbitrum'], ['solana', 'Solana'], ['bsc', 'BSC'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
                   <button key={k} className={ideasNet === k ? 'netchip on' : 'netchip'} onClick={() => loadIdeas(k)}>{l}</button>
                 ))}
-              </div>
-              <div className="pw-toggle" style={{ marginTop: 2 }}>
-                <button className={!passiveOnly && !watchOnly ? 'on' : ''} onClick={() => { setPassiveOnly(false); setWatchOnly(false) }}>Todas</button>
-                <button className={passiveOnly ? 'on' : ''} onClick={() => { setPassiveOnly(true); setWatchOnly(false) }}>🛡 Passivas</button>
-              </div>
-              <button className={watchOnly ? 'netchip on' : 'netchip'} style={{ marginTop: 8 }} onClick={() => { setWatchOnly(v => !v); setPassiveOnly(false) }}>⭐ Vigiando{watch.length ? ` (${watch.length})` : ''}</button>
-              {ideasLoading && <p className="foot-note">Buscando pares…</p>}
-              {!ideasLoading && ideas && shown.map((it: any, i: number) => {
+              </div>}
+              <button className={watchOnly ? 'netchip on' : 'netchip'} style={{ marginTop: 8 }} onClick={() => { const nv = !watchOnly; setWatchOnly(nv); if (nv) refreshWatched() }}>⭐ Vigiando{watch.length ? ` (${watch.length})` : ''}</button>
+              {watchOnly && watchRefreshing && <p className="foot-note">Atualizando pools vigiadas…</p>}
+              {ideasLoading && !watchOnly && <p className="foot-note">Buscando pares…</p>}
+              {(watchOnly || (!ideasLoading && ideas)) && shown.map((it: any, i: number) => {
                 const net = it.netApr
                 const netStr = net == null ? (it.feeApr != null ? it.feeApr + '%' : '—') : (net >= 0 ? '+' : '') + net + '%'
                 const netColor = net == null ? 'var(--text)' : net >= 12 ? 'var(--green)' : net > 0 ? '#F5A623' : 'var(--red)'
                 const ilColor = it.ilLevel <= 1 ? 'var(--green)' : it.ilLevel === 2 ? '#7CE0A0' : it.ilLevel === 3 ? '#F5A623' : 'var(--red)'
                 const gc = it.yieldGrade === 'A' ? 'var(--green)' : it.yieldGrade === 'B' ? '#7CE0A0' : it.yieldGrade === 'C' ? '#F5A623' : 'var(--red)'
                 const stColor = it.verdictTone === 'buy' ? 'var(--green)' : it.verdictTone === 'sell' ? 'var(--red)' : '#F5A623'
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)
+                const medal = watchOnly ? '⭐' : i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)
                 const starred = watch.includes(keyOf(it))
                 const dataLink = it.dataUrl || it.gtUrl
                 const open = expandedIdea === keyOf(it)
@@ -1035,11 +1079,11 @@ export default function DashboardApp({
                   </div>
                 )
               })}
-              {!ideasLoading && ideas && shown.length === 0 && <p className="foot-note">{watchOnly ? 'Você ainda não está vigiando pools nessa visão — toque na ⭐ de um card.' : passiveOnly ? 'Nenhuma pool passiva de qualidade nessa rede agora.' : 'Sem pares de qualidade nessa rede agora — tente outra rede.'}</p>}
-              {!ideasLoading && ideas && shown.length > 0 && (
+              {!watchRefreshing && shown.length === 0 && <p className="foot-note">{watchOnly ? (watch.length ? 'Suas pools vigiadas ainda estão carregando — puxe de novo em instantes.' : 'Você ainda não está vigiando nenhuma pool — toque na ⭐ de um card.') : (ideasLoading ? '' : 'Sem pares de qualidade nessa rede agora — tente outra rede.')}</p>}
+              {shown.length > 0 && (
                 <button className="addbtn" style={{ marginTop: 12 }} onClick={() => has(3) ? openCalc() : setUpgrade({ tier: 3, feature: 'Calculadora de IL' })}>🧮 Simular IL e retorno {!has(3) && '🔒'}</button>
               )}
-              <p className="foot-note"><b>Nota de Yield (0–100)</b> = retorno líquido + sustentabilidade + IL + liquidez. <b>APR líquido</b> = taxa − IL. Fonte: DefiLlama. Não é recomendação — estude cada pool antes de fornecer liquidez.</p>
+              <p className="foot-note"><b>Nota de Yield (0–100)</b> = retorno líquido + sustentabilidade + IL + liquidez. <b>APR líquido</b> = taxa − IL. Só pools concentradas V3 (fora passivas V2 e V4). Fonte: DefiLlama. Não é recomendação — estude cada pool antes de fornecer liquidez.</p>
             </>)
             })()}
           </section>
@@ -1101,50 +1145,70 @@ export default function DashboardApp({
 
           {/* METAS */}
           <section className={`screen ${tab === 'metas' ? 'active' : ''}`}>
-            <div className="eyebrow">Meta de aporte vs. real</div>
-            <div className="card">{priced.filter(h => h.meta_pct > 0).sort((a, b) => (b.kind === 'cash' ? 1 : 0) - (a.kind === 'cash' ? 1 : 0) || b.meta_pct - a.meta_pct).map((h, i) => {
-              const real = t.patr ? valOf(h) / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1), gap = real - h.meta_pct
-              const cashSurplus = h.kind === 'cash' && gap > 0.5
-              const gapColor = cashSurplus ? 'var(--green)' : (Math.abs(gap) < 0.5 ? 'var(--muted)' : (gap < 0 ? 'var(--pink)' : 'var(--red)'))
-              const gapLabel = cashSurplus ? 'disponível pra alocar ' : (gap < 0 ? 'faltam ' : 'sobra ')
-              return (<div key={h.id} style={{ padding: '10px 0', borderTop: i > 0 ? '1px solid var(--line)' : undefined }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span style={{ fontWeight: 600, fontSize: 13.5 }}>{h.symbol}</span><span className="num" style={{ fontSize: 12, color: gapColor }}>{gapLabel}{fmt(Math.abs(gap), 1)}%</span></div><div className="metabar" style={{ marginTop: 8 }}><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%`, ...(cashSurplus ? { background: 'linear-gradient(90deg,#12b981,var(--green))', boxShadow: '0 0 12px rgba(43,255,154,.5)' } : {}) }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>)
-            })}</div>
+            <div className="eyebrow">🎯 Metas de alocação</div>
+            <div className="card" style={{ background: 'linear-gradient(180deg,rgba(255,46,154,.08),rgba(20,12,32,.5))', border: '1px solid rgba(255,46,154,.22)' }}>
+              <div style={{ fontFamily: "'Sora'", fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Como funciona?</div>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, lineHeight: 1.55 }}>
+                Defina o <b style={{ color: 'var(--text)' }}>% ideal</b> de cada ativo na sua carteira. A barra mostra onde você <b>está</b> (real) e onde <b>quer chegar</b> (meta). Quando o real fica abaixo da meta, é sinal de <b style={{ color: 'var(--pink-bright)' }}>aportar</b>; acima, de <b style={{ color: 'var(--red)' }}>realizar</b> pra reequilibrar. O ideal é a soma das metas fechar em <b>100%</b>.
+              </p>
+            </div>
+            {(() => {
+              const metas = priced.filter(h => h.meta_pct > 0).sort((a, b) => (b.kind === 'cash' ? 1 : 0) - (a.kind === 'cash' ? 1 : 0) || b.meta_pct - a.meta_pct)
+              const somaMetas = metas.reduce((s, h) => s + h.meta_pct, 0)
+              const somaColor = Math.abs(somaMetas - 100) < 0.5 ? 'var(--green)' : somaMetas > 100 ? 'var(--red)' : '#F5A623'
+              const semMeta = priced.filter(h => (h.kind === 'crypto' || h.kind === 'stock' || h.kind === 'cash') && !(h.meta_pct > 0))
+              return (<>
+                <div className="card section-gap">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: metas.length ? 4 : 0 }}>
+                    <div className="eyebrow" style={{ margin: 0 }}>Meta vs. real</div>
+                    <span className="num" style={{ fontSize: 12, color: somaColor }}>soma {fmt(somaMetas, 1)}% <span style={{ color: 'var(--faint)' }}>/ 100%</span></span>
+                  </div>
+                  {metas.length === 0 && <p className="foot-note" style={{ textAlign: 'left', padding: 0 }}>Nenhuma meta definida ainda. Toque em <b>+ definir meta</b> pra criar a primeira.</p>}
+                  {metas.map((h, i) => {
+                    const real = t.patr ? valOf(h) / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1), gap = real - h.meta_pct
+                    const cashSurplus = h.kind === 'cash' && gap > 0.5
+                    const gapColor = cashSurplus ? 'var(--green)' : (Math.abs(gap) < 0.5 ? 'var(--muted)' : (gap < 0 ? 'var(--pink)' : 'var(--red)'))
+                    const gapLabel = cashSurplus ? 'disponível pra alocar ' : (gap < 0 ? 'faltam ' : 'sobra ')
+                    return (<div key={h.id} style={{ padding: '12px 0', borderTop: i > 0 ? '1px solid var(--line)' : undefined }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13.5 }}>{h.symbol} <span style={{ color: 'var(--faint)', fontWeight: 400, fontSize: 11 }}>{h.name}</span></span>
+                        <span className="num" style={{ fontSize: 12, color: gapColor }}>{gapLabel}{fmt(Math.abs(gap), 1)}%</span>
+                      </div>
+                      <div className="metabar" style={{ marginTop: 8 }}>
+                        <div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%`, ...(cashSurplus ? { background: 'linear-gradient(90deg,#12b981,var(--green))', boxShadow: '0 0 12px rgba(43,255,154,.5)' } : {}) }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div>
+                        <div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {fmt(h.meta_pct, 1)}%</span></div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <span className="txtag" style={{ cursor: 'pointer', color: 'var(--purple)' }} onClick={() => openMeta(h)}>editar ✎</span>
+                        <span className="txtag" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => removeMeta(h)}>excluir ✕</span>
+                      </div>
+                    </div>)
+                  })}
+                  <button className="addbtn" onClick={() => openMeta()}>+ definir meta</button>
+                </div>
+                {semMeta.length > 0 && <p className="foot-note" style={{ textAlign: 'left' }}>Sem meta: {semMeta.map(h => h.symbol).join(', ')} — toque em <b>+ definir meta</b> pra incluir.</p>}
+              </>)
+            })()}
           </section>
 
           {/* RADAR */}
           <section className={`screen ${tab === 'radar' ? 'active' : ''}`}>
             <div className="eyebrow">Radar de mercado · cardápio</div>
             <div className="segbar">
-              {([['top', 'Top'], ['alts', 'Altcoins'], ['memes', 'Memes'], ['pools', 'Pools']] as [string, string][]).map(([k, l]) => (
+              {([['top', 'Top'], ['alts', 'Altcoins'], ['memes', 'Memes']] as [string, string][]).map(([k, l]) => (
                 <button key={k} className={radarSeg === k ? 'seg on' : 'seg'} onClick={() => setRadarSeg(k as any)}>{l}</button>
               ))}
             </div>
             {radarLoading && <div>{[0, 1, 2, 3, 4].map(i => <div key={i} className="skel skel-row" style={{ height: 62, borderRadius: 14, marginBottom: 9 }} />)}</div>}
-            {!radarLoading && radar && radarSeg !== 'pools' && (radar[radarSeg] || []).map((c: any, i: number) => (
+            {!radarLoading && radar && (radar[radarSeg] || []).map((c: any, i: number) => (
               <div className="qrow" key={i}>
                 <div className="qsym">{c.image ? <img src={c.image} alt="" /> : c.symbol.slice(0, 3)}</div>
                 <div className="qname"><b>{c.name}</b><span>{c.symbol} · vol {abbr(c.vol)}</span></div>
                 <div className="qprice"><div className="p">{usd(c.price)}</div><div className="qchg"><span style={{ color: c.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(c.ch24 || 0)} 24h</span>{c.ch7d != null && <span style={{ color: c.ch7d >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 8 }}>{pct(c.ch7d)} 7d</span>}</div></div>
               </div>
             ))}
-            {!radarLoading && radar && radarSeg === 'pools' && (
-              <div className="netbar">
-                {([['all', 'Todas'], ['eth', 'Ethereum'], ['solana', 'Solana'], ['base', 'Base'], ['bsc', 'BSC'], ['arbitrum', 'Arbitrum'], ['polygon', 'Polygon']] as [string, string][]).map(([k, l]) => (
-                  <button key={k} className={poolNet === k ? 'netchip on' : 'netchip'} onClick={() => loadPoolsNet(k)}>{l}</button>
-                ))}
-              </div>
-            )}
-            {poolsLoading && radarSeg === 'pools' && <div>{[0, 1, 2].map(i => <div key={i} className="skel skel-row" style={{ height: 62, borderRadius: 14, marginBottom: 9 }} />)}</div>}
-            {!radarLoading && !poolsLoading && radar && radarSeg === 'pools' && (radar.pools || []).map((p: any, i: number) => (
-              <div className="qrow" key={i}>
-                <div className="qsym" style={{ background: 'linear-gradient(145deg,#2BFFC6,#7C5CFF)' }}>{(p.network || '').slice(0, 3).toUpperCase()}</div>
-                <div className="qname"><b>{p.name}</b><span>{p.network} · TVL {abbr(p.tvl)}</span></div>
-                <div className="qprice"><div className="p">{abbr(p.vol24)}</div><div className="qchg" style={{ color: p.ch24 >= 0 ? 'var(--green)' : 'var(--red)' }}>{pct(p.ch24 || 0)} 24h</div></div>
-              </div>
-            ))}
-            {!radarLoading && !poolsLoading && radar && radarSeg === 'pools' && (radar.pools || []).length === 0 && <p className="foot-note">Nenhuma pool com liquidez relevante nessa rede agora — tente outra rede.</p>}
-            {!radarLoading && radar && radarSeg !== 'pools' && (!radar[radarSeg] || radar[radarSeg].length === 0) && <p className="foot-note">Sem dados agora — tente novamente em instantes.</p>}
-            <p className="foot-note">Dados de mercado (CoinGecko / GeckoTerminal). Cardápio para pesquisa — não é recomendação. Estude cada ativo antes de investir.</p>
+            {!radarLoading && radar && (!radar[radarSeg] || radar[radarSeg].length === 0) && <p className="foot-note">Sem dados agora — tente novamente em instantes.</p>}
+            <p className="foot-note">Dados de mercado (CoinGecko). Cardápio para pesquisa — não é recomendação. As pools ficam na aba <b>Pools</b>. Estude cada ativo antes de investir.</p>
           </section>
 
           <section className={`screen ${tab === 'lab' ? 'active' : ''}`}>
@@ -1153,6 +1217,15 @@ export default function DashboardApp({
 
           <section className={`screen ${tab === 'tiger100' ? 'active' : ''}`}>
             <div className="eyebrow">📊 Tiger 100 · índice do mercado cripto</div>
+            <div className="card" style={{ background: 'linear-gradient(180deg,rgba(124,92,255,.10),rgba(20,12,32,.5))', border: '1px solid rgba(124,92,255,.25)' }}>
+              <div style={{ fontFamily: "'Sora'", fontWeight: 700, fontSize: 14, marginBottom: 6 }}>O que é o Tiger 100?</div>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, lineHeight: 1.55 }}>
+                É o <b style={{ color: 'var(--text)' }}>termômetro do mercado cripto em um número só</b> — como o Ibovespa é pra bolsa. Junta as 100 maiores moedas por valor de mercado numa única linha, com base 1.000. Quando o índice sobe, o mercado como um todo está subindo; quando cai, está caindo.
+              </p>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8, lineHeight: 1.55 }}>
+                <b style={{ color: 'var(--text)' }}>Como ajuda:</b> serve de referência pra você saber se a <b>sua</b> carteira está indo melhor ou pior que o mercado. Se o Tiger 100 fez +5% na semana e você fez +2%, ficou pra trás; se fez −5% e você fez −1%, se defendeu bem. Use a aba <b>Aportes</b> pra ver seu retorno e compare com o número aqui.
+              </p>
+            </div>
             {t100Loading && <><div className="skel skel-tall" /><div className="skel skel-block" /></>}
             {t100 && t100.count && (() => {
               const x = t100
@@ -1246,6 +1319,32 @@ export default function DashboardApp({
             )
           })}
         </nav>
+
+        {/* DEFINIR / EDITAR META */}
+        {metaForm && (() => {
+          const opts = priced.filter(h => (h.kind === 'crypto' || h.kind === 'stock' || h.kind === 'cash'))
+          const cur = opts.find(h => h.id === metaForm.id)
+          const realPct = cur && t.patr ? valOf(cur) / t.patr * 100 : null
+          return (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setMetaForm(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{metaForm.isNew ? '🎯 Definir meta' : `🎯 Meta de ${metaForm.symbol}`}</h3>
+              <p className="foot-note" style={{ marginTop: 4 }}>Defina o percentual ideal deste ativo na sua carteira. A soma de todas as metas idealmente fecha em 100%.</p>
+              {metaForm.isNew && (
+                <div className="field" style={{ marginTop: 12 }}><label>Ativo</label>
+                  <select value={metaForm.id} onChange={e => { const h = opts.find(x => x.id === e.target.value); setMetaForm({ ...metaForm, id: e.target.value, symbol: h?.symbol || '', meta_pct: h && h.meta_pct > 0 ? String(h.meta_pct).replace('.', ',') : metaForm.meta_pct }) }}>
+                    <option value="">— escolha —</option>
+                    {opts.map(h => <option key={h.id} value={h.id}>{h.symbol} · {h.name}{h.meta_pct > 0 ? ` (meta ${fmt(h.meta_pct, 1)}%)` : ''}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="field" style={{ marginTop: 12 }}><label>Meta (% da carteira)</label><input inputMode="decimal" value={metaForm.meta_pct} onChange={e => setMetaForm({ ...metaForm, meta_pct: e.target.value })} placeholder="ex: 25" /></div>
+              {realPct != null && <div className="modal-preview"><span>Hoje você tem</span><b className="num">{fmt(realPct, 1)}%{num(metaForm.meta_pct) > 0 ? ` · meta ${fmt(num(metaForm.meta_pct), 1)}%` : ''}</b></div>}
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setMetaForm(null)}>Cancelar</button><button className="btn" onClick={saveMeta}>Salvar meta</button></div>
+            </div></div>
+          </div>
+          )
+        })()}
 
         {/* UPGRADE (feature bloqueada por plano) */}
         {toast && <div className={`toast toast-${toast.type}`} onClick={() => setToast(null)}>{toast.msg}</div>}

@@ -91,6 +91,11 @@ function isConcentrated(dexId: string): boolean {
   const d = (dexId || '').toLowerCase()
   return /(^|[-_])(v3|v4|cl|clmm)([-_]|$)/.test(d) || /slipstream|algebra|concentrat|pancakeswap-v3|pancakeswap-v4/.test(d)
 }
+// V4 (Uniswap v4 / PancakeSwap v4 / hooks): ferramental ainda imaturo — o app foca em V3.
+function isV4(dexId: string): boolean {
+  const d = (dexId || '').toLowerCase()
+  return /(^|[-_])v4([-_]|$)/.test(d) || /uniswap-v4|pancakeswap-v4|-v4$/.test(d)
+}
 
 async function gecko(url: string) {
   const r = await fetch(url, { next: { revalidate: 300 }, headers: { accept: 'application/json' } })
@@ -167,12 +172,13 @@ async function buildForNetwork(netKey: string): Promise<any[]> {
     const highlight = label === 'ENTRAR'
 
     return {
-      name, dex, network: net, gtUrl, dexUrl, concentrated, poolType: concentrated ? 'Concentrada' : 'Passiva', tvl, vol24, ch24, volTvl, tracao,
+      name, dex, network: net, gtUrl, dexUrl, concentrated, v4: isV4(dexId), poolType: 'Concentrada V3', tvl, vol24, ch24, volTvl, tracao,
       feeApr: feeApr != null ? Math.round(feeApr) : null,
       il: c.il, ilLevel: c.ilLevel, tier: c.tier,
       verdictLabel: label, verdictTone: tone, verdict: reasons.join(' '), highlight, score, _floor: floor,
     }
-  }).filter((x: any) => x.tvl >= x._floor && Math.abs(x.ch24) < 70 && x.tier !== 'other' && x.volTvl > 0.02)
+    // só pools concentradas geração V3 (fora passivas V2 e V4)
+  }).filter((x: any) => x.concentrated && !x.v4 && x.tvl >= x._floor && Math.abs(x.ch24) < 70 && x.tier !== 'other' && x.volTvl > 0.02)
 }
 
 const ALL_NETS = ['eth', 'base', 'arbitrum', 'solana', 'bsc', 'polygon']
@@ -236,6 +242,8 @@ function buildFromLlama(all: any[], netKey: string): any[] {
     const dexId = project
     const dex = prettyDex(project, '')
     const concentrated = isConcentrated(project)
+    const v4 = isV4(project)
+    if (!concentrated || v4) continue   // só V3 concentrada — fora passivas V2 e novas V4
     const us = Array.isArray(x.underlyingTokens) ? x.underlyingTokens : []
     const t0 = String(us[0] || ''), t1 = String(us[1] || '')
     const dexUrl = dexLink(dexId, net, '', t0, t1)
@@ -278,7 +286,7 @@ function buildFromLlama(all: any[], netKey: string): any[] {
 
     const score = yieldScore                                                     // <<< ranking pela Nota de Yield
     out.push({
-      name: toks.join(' / '), dex, network: net, dexUrl, dataUrl, concentrated, poolType: concentrated ? 'Concentrada' : 'Passiva',
+      name: toks.join(' / '), dex, network: net, dexUrl, dataUrl, concentrated, v4, poolType: 'Concentrada V3',
       tvl, vol24, feeApr: Math.round(feeApr), rewardApr: Math.round(rewardApr), netApr: Math.round(netApr),
       il: c.il, ilLevel: c.ilLevel, tier: c.tier, sustainable, maxEntry, daysToCoverIL,
       yieldScore, yieldGrade, yieldBreak, outlook, outlookProb: predProb, apyMean30d: apyMean30d != null ? Math.round(apyMean30d) : null,
