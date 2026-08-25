@@ -85,6 +85,9 @@ export default function DashboardApp({
   const [coinResults, setCoinResults] = useState<any[] | null>(null)
   const [coinSearching, setCoinSearching] = useState(false)
   const [coinManual, setCoinManual] = useState(false)
+  const [metaCoinQuery, setMetaCoinQuery] = useState('')
+  const [metaCoinResults, setMetaCoinResults] = useState<any[] | null>(null)
+  const [metaCoinSearching, setMetaCoinSearching] = useState(false)
   const [poolCoinQuery, setPoolCoinQuery] = useState('')
   const [poolCoinResults, setPoolCoinResults] = useState<any[] | null>(null)
   const [poolCoinSearching, setPoolCoinSearching] = useState(false)
@@ -456,7 +459,7 @@ export default function DashboardApp({
     const existing = holdings.find(h => h.symbol === symbol && h.kind === 'crypto')
     // preco guardado = custo medio atual (fallback). O preco AO VIVO sobrepoe na tela via ph()
     // quando ha cg_id. NUNCA congelar no 1o buy: sem isso o valor trava num preco antigo/errado.
-    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta, qty, price: avgCost, invested, current_value: null, sort: existing?.sort ?? 50 }
+    const payload: any = { user_id: userId, kind: 'crypto', symbol, name, cg_id: cg, color, meta_pct: meta || existing?.meta_pct || 0, qty, price: avgCost, invested, current_value: null, sort: existing?.sort ?? 50 }
     if (existing?.id) await supabase.from('holdings').update(payload).eq('id', existing.id)
     else await supabase.from('holdings').insert(payload)
   }, [supabase, holdings, userId])
@@ -527,20 +530,56 @@ export default function DashboardApp({
   async function saveAssetEdit() { const f = assetEdit; if (!f?.id) return; await supabase.from('holdings').update({ name: f.name, cg_id: f.cg_id, meta_pct: num(f.meta_pct) }).eq('id', f.id); setAssetEdit(null); setDetail(null); await refetch() }
 
   // ---- METAS: definir/editar/excluir a meta (% ideal) de cada ativo ----
-  const openMeta = (h?: Holding) => setMetaForm(h
-    ? { id: h.id, symbol: h.symbol, meta_pct: String(h.meta_pct || '').replace('.', ','), isNew: false }
-    : { id: '', symbol: '', meta_pct: '', isNew: true })
+  const openMeta = (h?: Holding) => {
+    setMetaCoinQuery(''); setMetaCoinResults(null)
+    setMetaForm(h
+      ? { id: h.id, symbol: h.symbol, meta_pct: String(h.meta_pct || '').replace('.', ','), isNew: false }
+      : { id: '', symbol: '', meta_pct: '', isNew: true })
+  }
+  // busca online de moeda p/ criar meta de um ativo que o usuário ainda não tem
+  useEffect(() => {
+    if (!metaForm?.isNew) return
+    const q = metaCoinQuery.trim()
+    if (q.length < 2) { setMetaCoinResults(null); return }
+    setMetaCoinSearching(true)
+    const t = setTimeout(() => {
+      fetch(`/api/coinsearch?q=${encodeURIComponent(q)}`).then(r => r.json()).then(d => setMetaCoinResults(d.coins || [])).catch(() => setMetaCoinResults([])).finally(() => setMetaCoinSearching(false))
+    }, 400)
+    return () => clearTimeout(t)
+  }, [metaCoinQuery, metaForm?.isNew])
+  const pickMetaCoin = (c: any) => {
+    const sym = (c.symbol || '').toUpperCase()
+    const existing = holdings.find(h => h.cg_id === c.id || (h.kind === 'crypto' && h.symbol === sym))
+    setMetaForm((prev: any) => ({
+      ...prev,
+      id: existing?.id || '', symbol: sym, name: c.name, cg_id: c.id, img: c.image || '',
+      color: existing?.color || '#A855F7', target: !existing,
+      meta_pct: existing && existing.meta_pct > 0 ? String(existing.meta_pct).replace('.', ',') : prev.meta_pct,
+    }))
+    setMetaCoinQuery(''); setMetaCoinResults(null)
+  }
   async function saveMeta() {
     const f = metaForm; if (!f) return
-    const id = f.id; if (!id) { flash('Escolha um ativo primeiro', 'err'); return }
     const v = num(f.meta_pct)
     if (v < 0 || v > 100) { flash('A meta deve ficar entre 0% e 100%', 'err'); return }
-    await supabase.from('holdings').update({ meta_pct: v }).eq('id', id)
+    if (f.id) {
+      // ativo já existente na carteira → só atualiza a meta
+      await supabase.from('holdings').update({ meta_pct: v }).eq('id', f.id)
+    } else if (f.cg_id && f.symbol) {
+      // ativo novo (não está na carteira) → cria holding-alvo com saldo zero + meta
+      await supabase.from('holdings').insert({
+        user_id: userId, kind: 'crypto', symbol: f.symbol.toUpperCase(), name: f.name || f.symbol,
+        cg_id: f.cg_id, color: f.color || '#A855F7', qty: 0, price: 0, invested: 0, current_value: null, meta_pct: v, sort: 50,
+      })
+    } else { flash('Escolha um ativo primeiro', 'err'); return }
     setMetaForm(null); await refetch(); flash('Meta salva', 'ok')
   }
   async function removeMeta(h: Holding) {
     if (!h.id) return
-    await supabase.from('holdings').update({ meta_pct: 0 }).eq('id', h.id)
+    // se for um ativo-alvo (saldo zero, sem histórico), remove o holding inteiro; senão só zera a meta
+    const isTargetOnly = h.kind === 'crypto' && (h.qty || 0) === 0 && (h.invested || 0) === 0 && txs.filter(x => x.symbol === h.symbol).length === 0
+    if (isTargetOnly) await supabase.from('holdings').delete().eq('id', h.id)
+    else await supabase.from('holdings').update({ meta_pct: 0 }).eq('id', h.id)
     await refetch(); flash('Meta removida', 'ok')
   }
   const fdate = (f: Flow) => f.move_date || (f.created_at ? f.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))
@@ -1220,10 +1259,10 @@ export default function DashboardApp({
             <div className="card" style={{ background: 'linear-gradient(180deg,rgba(124,92,255,.10),rgba(20,12,32,.5))', border: '1px solid rgba(124,92,255,.25)' }}>
               <div style={{ fontFamily: "'Sora'", fontWeight: 700, fontSize: 14, marginBottom: 6 }}>O que é o Tiger 100?</div>
               <p className="foot-note" style={{ textAlign: 'left', padding: 0, lineHeight: 1.55 }}>
-                É o <b style={{ color: 'var(--text)' }}>termômetro do mercado cripto em um número só</b> — como o Ibovespa é pra bolsa. Junta as 100 maiores moedas por valor de mercado numa única linha, com base 1.000. Quando o índice sobe, o mercado como um todo está subindo; quando cai, está caindo.
+                É um <b style={{ color: 'var(--text)' }}>índice do mercado cripto</b> — como o Ibovespa é pra bolsa. Junta as <b>100 maiores moedas por valor de mercado</b> numa única linha (base 1.000), ponderadas por capitalização. Não tem nada a ver com a sua carteira: mede o mercado como um todo. Quando sobe, o conjunto das grandes cripto está subindo; quando cai, está caindo.
               </p>
               <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8, lineHeight: 1.55 }}>
-                <b style={{ color: 'var(--text)' }}>Como ajuda:</b> serve de referência pra você saber se a <b>sua</b> carteira está indo melhor ou pior que o mercado. Se o Tiger 100 fez +5% na semana e você fez +2%, ficou pra trás; se fez −5% e você fez −1%, se defendeu bem. Use a aba <b>Aportes</b> pra ver seu retorno e compare com o número aqui.
+                <b style={{ color: 'var(--text)' }}>Como usar:</b> é o seu <b>referencial de mercado</b>. Serve pra ler o humor geral (alta, baixa, lateral) num número só e — se quiser — comparar por fora com o seu próprio resultado (aba <b>Aportes</b>) pra saber se você bateu ou ficou atrás do mercado no período.
               </p>
             </div>
             {t100Loading && <><div className="skel skel-tall" /><div className="skel skel-block" /></>}
@@ -1325,18 +1364,39 @@ export default function DashboardApp({
           const opts = priced.filter(h => (h.kind === 'crypto' || h.kind === 'stock' || h.kind === 'cash'))
           const cur = opts.find(h => h.id === metaForm.id)
           const realPct = cur && t.patr ? valOf(cur) / t.patr * 100 : null
+          const chosen = metaForm.symbol && (metaForm.id || metaForm.cg_id)
           return (
           <div className="modal" onClick={e => { if (e.target === e.currentTarget) setMetaForm(null) }}>
             <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
               <h3>{metaForm.isNew ? '🎯 Definir meta' : `🎯 Meta de ${metaForm.symbol}`}</h3>
               <p className="foot-note" style={{ marginTop: 4 }}>Defina o percentual ideal deste ativo na sua carteira. A soma de todas as metas idealmente fecha em 100%.</p>
-              {metaForm.isNew && (
-                <div className="field" style={{ marginTop: 12 }}><label>Ativo</label>
-                  <select value={metaForm.id} onChange={e => { const h = opts.find(x => x.id === e.target.value); setMetaForm({ ...metaForm, id: e.target.value, symbol: h?.symbol || '', meta_pct: h && h.meta_pct > 0 ? String(h.meta_pct).replace('.', ',') : metaForm.meta_pct }) }}>
+              {metaForm.isNew && (<>
+                <div className="field" style={{ marginTop: 12 }}><label>Buscar ativo (qualquer cripto, mesmo sem ter)</label>
+                  <input value={metaCoinQuery} onChange={e => setMetaCoinQuery(e.target.value)} placeholder="Digite o nome ou sigla: Pepe, Solana, BONK…" />
+                </div>
+                {metaCoinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Buscando…</p>}
+                {metaCoinResults && metaCoinResults.length > 0 && (
+                  <div className="card" style={{ marginTop: 8, padding: 6 }}>
+                    {metaCoinResults.map((c: any) => (
+                      <div key={c.id} onClick={() => pickMetaCoin(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px', cursor: 'pointer', borderRadius: 8 }}>
+                        <div className="qsym" style={{ width: 28, height: 28, background: '#1a1226' }}>{c.image ? <img src={c.image} alt="" /> : (c.symbol || '').slice(0, 3)}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}><b style={{ fontSize: 13 }}>{c.name}</b> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{(c.symbol || '').toUpperCase()}</span></div>
+                        {c.price != null && <span className="num" style={{ fontSize: 11, color: 'var(--muted)' }}>{usd(c.price)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {metaCoinResults && metaCoinResults.length === 0 && !metaCoinSearching && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Nenhuma moeda encontrada — tente outro nome.</p>}
+                <div className="niche-h" style={{ margin: '14px 2px 6px' }}>ou escolha um ativo que você já tem</div>
+                <div className="field"><label>Ativo da carteira</label>
+                  <select value={metaForm.id} onChange={e => { const h = opts.find(x => x.id === e.target.value); setMetaForm({ ...metaForm, id: e.target.value, cg_id: '', symbol: h?.symbol || '', name: h?.name || '', meta_pct: h && h.meta_pct > 0 ? String(h.meta_pct).replace('.', ',') : metaForm.meta_pct }) }}>
                     <option value="">— escolha —</option>
                     {opts.map(h => <option key={h.id} value={h.id}>{h.symbol} · {h.name}{h.meta_pct > 0 ? ` (meta ${fmt(h.meta_pct, 1)}%)` : ''}</option>)}
                   </select>
                 </div>
+              </>)}
+              {chosen && (
+                <div className="modal-preview" style={{ marginTop: 12 }}><span>Ativo</span><b className="num">{metaForm.symbol}{metaForm.target ? ' · novo (saldo 0)' : ''}</b></div>
               )}
               <div className="field" style={{ marginTop: 12 }}><label>Meta (% da carteira)</label><input inputMode="decimal" value={metaForm.meta_pct} onChange={e => setMetaForm({ ...metaForm, meta_pct: e.target.value })} placeholder="ex: 25" /></div>
               {realPct != null && <div className="modal-preview"><span>Hoje você tem</span><b className="num">{fmt(realPct, 1)}%{num(metaForm.meta_pct) > 0 ? ` · meta ${fmt(num(metaForm.meta_pct), 1)}%` : ''}</b></div>}
