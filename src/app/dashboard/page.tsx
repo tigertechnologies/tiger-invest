@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import DashboardApp from '@/components/DashboardApp'
 import Paywall from '@/components/Paywall'
 import type { Holding, Flow, Transaction, Pool, Level } from '@/lib/data'
+import type { PerpPosition } from '@/lib/perps'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,8 @@ export default async function DashboardPage() {
   const { data: txs } = await supabase.from('transactions').select('*').eq('user_id', user.id).order('buy_date', { ascending: true })
   const { data: pools } = await supabase.from('pools').select('*').eq('user_id', user.id).order('created_at', { ascending: true })
   const { data: levels } = await supabase.from('levels').select('*').eq('user_id', user.id).order('price', { ascending: false })
+  const { data: perps } = await supabase.from('perps_positions').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+  const { data: perpAcct } = await supabase.from('perps_account').select('*').eq('user_id', user.id).maybeSingle()
 
   return (
     <DashboardApp
@@ -53,6 +56,8 @@ export default async function DashboardPage() {
       initialTx={(txs ?? []) as Transaction[]}
       initialPools={(pools ?? []) as Pool[]}
       initialLevels={(levels ?? []) as Level[]}
+      initialPerps={(perps ?? []) as PerpPosition[]}
+      initialPerpAcct={(perpAcct?.collateral ?? 0) as number}
     />
   )
 }

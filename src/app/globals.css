@@ -343,6 +343,24 @@ select{font-family:'Inter';}
 .pr-band{position:absolute;inset:0;border-radius:5px;background:linear-gradient(90deg,rgba(43,255,154,.25),rgba(43,255,154,.5),rgba(43,255,154,.25));}
 .pr-cur{position:absolute;top:-5px;width:4px;height:19px;border-radius:2px;background:#fff;box-shadow:0 0 8px #fff;}
 .pr-cur.out{background:var(--red);box-shadow:0 0 8px var(--red);}
+
+/* ---- Perps (Ondo) ---- */
+.perp-acct{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.pa-cell{display:flex;flex-direction:column;gap:3px;padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;}
+.pa-cell span{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);}
+.pa-cell b{font-size:15px;}
+.liqbar{height:8px;border-radius:5px;background:rgba(255,255,255,.06);overflow:hidden;}
+.liqbar-fill{height:100%;border-radius:5px;transition:width .4s ease;}
+.side-pill{display:inline-block;font-family:'Sora';font-size:10px;font-weight:700;letter-spacing:.3px;padding:2px 8px;border-radius:999px;vertical-align:middle;margin-left:4px;}
+.side-pill.long{background:rgba(43,255,154,.14);color:var(--green);box-shadow:0 0 12px rgba(43,255,154,.18);}
+.side-pill.short{background:rgba(255,77,109,.14);color:var(--red);box-shadow:0 0 12px rgba(255,77,109,.18);}
+.side-pill.sm{font-size:9px;padding:1px 6px;}
+.chip.up{background:rgba(43,255,154,.1);color:var(--green);border-color:rgba(43,255,154,.25);}
+.chip.down{background:rgba(255,77,109,.1);color:var(--red);border-color:rgba(255,77,109,.25);}
+.perp-card{border-color:rgba(168,85,247,.22);}
+input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:5px;background:linear-gradient(90deg,var(--purple),var(--pink));outline:none;padding:0;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 0 10px rgba(168,85,247,.7);cursor:pointer;}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border:none;border-radius:50%;background:#fff;box-shadow:0 0 10px rgba(168,85,247,.7);cursor:pointer;}
 .poolrangelbl{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:'JetBrains Mono';}
 .pr-now{color:var(--text);font-weight:600;}
 

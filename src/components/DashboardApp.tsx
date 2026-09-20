@@ -10,8 +10,12 @@ import {
   Holding, Flow, Transaction, Pool, Signal, DEFAULT_POOL, BRL_RATE,
   value as valOf, usd, pct, brl, fmt, daysSince, Level,
 } from '@/lib/data'
+import {
+  PerpPosition, PerpMarket, PerpSide, metaFor, mmrFor, PERP_META, PERP_TAKER_FEE,
+  upnl, notionalAt, liqPrice, liqDistancePct, accountSummary,
+} from '@/lib/perps'
 
-type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'aportes' | 'metas' | 'lab' | 'tiger100'
+type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
@@ -38,15 +42,15 @@ function xirr(cfs: { date: string; amount: number }[]): number | null {
 }
 
 export default function DashboardApp({
-  userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels,
-}: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[] }) {
+  userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels, initialPerps = [], initialPerpAcct = 0,
+}: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[]; initialPerps?: PerpPosition[]; initialPerpAcct?: number }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   // --- Gate por plano ---
   const RANK: Record<string, number> = { start: 1, pro: 2, alpha: 3 }
   const rank = RANK[plan] || 1
   const has = (min: number) => rank >= min
-  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, aportes: 3, lab: 2, tiger100: 1 }
+  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, perps: 2, aportes: 3, lab: 2, tiger100: 1 }
   const PLAN_NAME: Record<number, string> = { 2: 'TIGER PRO', 3: 'TIGER ALPHA' }
   const [upgrade, setUpgrade] = useState<{ tier: number; feature: string } | null>(null)
   // Aviso de renovação (aparece 5 dias antes, até o dia do vencimento)
@@ -149,23 +153,36 @@ export default function DashboardApp({
   const [watchRefreshing, setWatchRefreshing] = useState(false)
   const [expandedIdea, setExpandedIdea] = useState<string | null>(null)
   const [calc, setCalc] = useState<any | null>(null)
+  // --- Perps (Ondo) ---
+  const [perps, setPerps] = useState<PerpPosition[]>(initialPerps)
+  const [perpCollateral, setPerpCollateral] = useState<number>(initialPerpAcct)
+  const [perpMkts, setPerpMkts] = useState<Record<string, PerpMarket>>({})
+  const [perpMktList, setPerpMktList] = useState<PerpMarket[]>([])
+  const [perpForm, setPerpForm] = useState<any | null>(null)
+  const [perpClose, setPerpClose] = useState<any | null>(null)
+  const [perpAcctForm, setPerpAcctForm] = useState<string | null>(null)
+  const [perpPick, setPerpPick] = useState('')
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
   const refetch = useCallback(async () => {
     if (!userId) return
-    const [h, f, t, p, l] = await Promise.all([
+    const [h, f, t, p, l, pp, pa] = await Promise.all([
       supabase.from('holdings').select('*').eq('user_id', userId).order('sort', { ascending: true }),
       supabase.from('flows').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
       supabase.from('transactions').select('*').eq('user_id', userId).order('buy_date', { ascending: true }),
       supabase.from('pools').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
       supabase.from('levels').select('*').eq('user_id', userId).order('price', { ascending: false }),
+      supabase.from('perps_positions').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+      supabase.from('perps_account').select('*').eq('user_id', userId).maybeSingle(),
     ])
     if (h.data) setHoldings(h.data as Holding[])
     if (f.data) setFlows(f.data as Flow[])
     if (t.data) setTxs(t.data as Transaction[])
     if (p.data) setPools(p.data as Pool[])
     if (l.data) setLevels(l.data as Level[])
+    if (pp.data) setPerps(pp.data as PerpPosition[])
+    if (pa.data) setPerpCollateral((pa.data as any).collateral ?? 0)
   }, [supabase, userId])
 
   // seed ÚNICO (gated por flag) — nunca reinjeta
@@ -219,6 +236,20 @@ export default function DashboardApp({
     load(); const t = setInterval(load, 60000)
     return () => { active = false; clearInterval(t) }
   }, [holdings, pools])
+
+  // Perps Ondo — mercados/preços ao vivo (só quando a aba está aberta ou há posição aberta)
+  useEffect(() => {
+    const need = tab === 'perps' || perps.some(p => p.status === 'open')
+    if (!need) return
+    let active = true
+    const load = () => fetch('/api/perps').then(r => r.json()).then((d: any) => {
+      if (!active) return
+      setPerpMkts(d.map || {})
+      setPerpMktList(d.markets || [])
+    }).catch(() => {})
+    load(); const t = setInterval(load, tab === 'perps' ? 15000 : 45000)
+    return () => { active = false; clearInterval(t) }
+  }, [tab, perps])
 
   // sinais técnicos
   useEffect(() => {
@@ -659,6 +690,57 @@ export default function DashboardApp({
     setPoolForm(null); await refetch()
   }
   async function delPool(id: string) { await supabase.from('pools').delete().eq('id', id); setPoolForm(null); await refetch() }
+
+  // ---- Perps (Ondo) ----
+  const perpMark = useCallback((p: PerpPosition) => perpMkts[p.symbol]?.last || 0, [perpMkts])
+  const perpMmr = useCallback((p: PerpPosition) => perpMkts[p.symbol]?.mmr ?? mmrFor(metaFor(p.symbol).maxLev), [perpMkts])
+
+  function openPerpForm(m?: PerpMarket) {
+    const mk = m || perpMktList.find(x => x.last > 0) || perpMktList[0]
+    const meta = mk ? metaFor(mk.symbol) : { maxLev: 10 }
+    setPerpForm({
+      market: mk?.market || '', symbol: mk?.symbol || '', name: mk?.name || '',
+      side: 'long' as PerpSide, leverage: Math.min(5, meta.maxLev), margin: '', entry: mk?.last ? String(mk.last) : '',
+    })
+    setPerpPick('')
+  }
+  function pickPerpMkt(m: PerpMarket) {
+    setPerpForm((f: any) => ({ ...f, market: m.market, symbol: m.symbol, name: m.name, entry: m.last ? String(m.last) : (f?.entry || ''), leverage: Math.min(f?.leverage || 5, m.maxLev) }))
+    setPerpPick('')
+  }
+  async function savePerp() {
+    const f = perpForm; if (!f?.symbol) { flash('Escolha um mercado', 'err'); return }
+    const entry = num(f.entry), margin = num(f.margin), lev = Math.max(1, Math.round(num(f.leverage) || 1))
+    if (!(entry > 0) || !(margin > 0)) { flash('Preencha margem e preço de entrada', 'err'); return }
+    const size = margin * lev / entry
+    const payload = {
+      user_id: userId, market: f.market, symbol: f.symbol, name: f.name,
+      side: f.side, leverage: lev, size, entry_price: entry, margin,
+      opened_at: new Date().toISOString().slice(0, 10), status: 'open', note: f.note || '',
+    }
+    if (f.id) await supabase.from('perps_positions').update(payload).eq('id', f.id)
+    else await supabase.from('perps_positions').insert(payload)
+    // se ainda não há colateral definido, assume a margem desta 1ª posição (editável depois)
+    if (!perpCollateral) { await supabase.from('perps_account').upsert({ user_id: userId, collateral: margin, updated_at: new Date().toISOString() }); setPerpCollateral(margin) }
+    setPerpForm(null); await refetch(); flash('Posição registrada', 'ok')
+  }
+  async function delPerp(id: string) { await supabase.from('perps_positions').delete().eq('id', id); setPerpForm(null); setPerpClose(null); await refetch() }
+  async function closePerp() {
+    const c = perpClose; if (!c?.id) return
+    const px = num(c.price); if (!(px > 0)) { flash('Informe o preço de fechamento', 'err'); return }
+    const dir = c.side === 'long' ? 1 : -1
+    const gross = dir * c.size * (px - c.entry_price)
+    const fees = (c.size * c.entry_price + c.size * px) * PERP_TAKER_FEE   // taxa de entrada + saída (taker)
+    const realized = gross - fees
+    await supabase.from('perps_positions').update({ status: 'closed', close_price: px, closed_at: new Date().toISOString().slice(0, 10), realized_pnl: realized }).eq('id', c.id)
+    setPerpClose(null); await refetch(); flash(`Posição encerrada · ${realized >= 0 ? '+' : '−'}$${fmt(Math.abs(realized))}`, realized >= 0 ? 'ok' : 'info')
+  }
+  async function savePerpCollateral() {
+    const v = num(perpAcctForm || '0')
+    await supabase.from('perps_account').upsert({ user_id: userId, collateral: v, updated_at: new Date().toISOString() })
+    setPerpCollateral(v); setPerpAcctForm(null); await refetch()
+  }
+
   async function signOut() { await supabase.auth.signOut(); router.push('/login') }
 
   const usdSplit = (n: number) => { const s = usd(n); const i = s.lastIndexOf(','); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i)] }
@@ -1141,6 +1223,121 @@ export default function DashboardApp({
             })()}
           </section>
 
+          {/* PERPS (ONDO) */}
+          <section className={`screen ${tab === 'perps' ? 'active' : ''}`}>
+            {(() => {
+              const openPos = perps.filter(p => p.status === 'open')
+              const closedPos = perps.filter(p => p.status === 'closed')
+              const sum = accountSummary(perps, perpCollateral, perpMark, perpMmr)
+              const mrPct = sum.marginRatio * 100
+              const mrTone = mrPct >= 80 ? 'down' : mrPct >= 50 ? 'warn' : 'up'
+              const priced = openPos.some(p => (perpMkts[p.symbol]?.last || 0) > 0)
+              return (<>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div className="eyebrow" style={{ margin: 0 }}>Perps · Ondo</div>
+                  <a href="https://app.ondoperps.xyz/" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--purple)', fontWeight: 700, textDecoration: 'none' }}>app.ondoperps.xyz ↗</a>
+                </div>
+
+                {/* Conta de trading (espelho da Ondo) */}
+                <div className="card" style={{ marginBottom: 12 }}>
+                  <div className="eyebrow" style={{ marginBottom: 10 }}>Conta de trading</div>
+                  <div className="perp-acct">
+                    <div className="pa-cell"><span>Equity</span><b className="num">{usd(sum.equity)}</b></div>
+                    <div className="pa-cell"><span>uPnL</span><b className={`num ${sum.totalUpnl >= 0 ? 'up' : 'down'}`}>{(sum.totalUpnl >= 0 ? '+' : '−') + usd(Math.abs(sum.totalUpnl)).slice(1)}</b></div>
+                    <div className="pa-cell"><span>Margem disp.</span><b className="num">{usd(Math.max(0, sum.available))}</b></div>
+                    <div className="pa-cell"><span>Margin ratio</span><b className={`num ${mrTone === 'down' ? 'down' : mrTone === 'up' ? 'up' : ''}`} style={mrTone === 'warn' ? { color: '#F5A623' } : undefined}>{fmt(mrPct, 1)}%</b></div>
+                  </div>
+                  {openPos.length > 0 && (
+                    <div className="liqbar" style={{ marginTop: 12 }} title="Proximidade da liquidação">
+                      <div className="liqbar-fill" style={{ width: `${Math.min(100, Math.max(2, mrPct))}%`, background: mrTone === 'down' ? 'var(--red)' : mrTone === 'warn' ? '#F5A623' : 'linear-gradient(90deg,var(--green),#F5A623)' }} />
+                    </div>
+                  )}
+                  <div className="kv" style={{ marginTop: 10 }}>
+                    <span className="k">Colateral depositado (USDC)</span>
+                    <span className="v"><a onClick={() => setPerpAcctForm(String(perpCollateral || ''))} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }} className="num">{usd(perpCollateral)} ✎</a></span>
+                  </div>
+                  {mrTone === 'down' && openPos.length > 0 && <div className="rangestatus rs-out" style={{ marginTop: 10 }}>⚠ RISCO DE LIQUIDAÇÃO — margin ratio elevado</div>}
+                  {mrTone === 'warn' && openPos.length > 0 && <div className="rangestatus rs-warn" style={{ marginTop: 10 }}>⚠ ATENÇÃO — margem apertada, considere reduzir alavancagem</div>}
+                </div>
+
+                <button className="btn" onClick={() => openPerpForm()}>+ Abrir posição long / short</button>
+
+                {!priced && openPos.length > 0 && <p className="foot-note" style={{ textAlign: 'left', padding: '8px 2px 0' }}>Puxando preços ao vivo da Ondo…</p>}
+
+                {/* Posições abertas */}
+                <div style={{ marginTop: 14 }}>
+                  {openPos.map(p => {
+                    const m = perpMkts[p.symbol]
+                    const mark = m?.last || p.entry_price
+                    const mmr = perpMmr(p)
+                    const val = notionalAt(p.size, mark)
+                    const u = upnl(p, mark)
+                    const roe = p.margin ? u / p.margin * 100 : 0
+                    const maintI = notionalAt(p.size, mark) * mmr
+                    const A = sum.equity - u - sum.maintMargin + maintI
+                    const liq = liqPrice({ side: p.side, size: p.size, entry_price: p.entry_price, mmr }, A)
+                    const dist = liq != null ? liqDistancePct(p.side, mark, liq) : null
+                    const distTone = dist == null ? '' : dist < 8 ? 'down' : dist < 20 ? 'warn' : 'up'
+                    const funding = m?.fundingRate ?? 0
+                    return (
+                      <div className="poolcard perp-card" key={p.id} style={{ marginBottom: 12 }}>
+                        <div className="poolhead">
+                          <div className="poolt">
+                            <b>{p.symbol} <span className={`side-pill ${p.side}`}>{p.side === 'long' ? 'Long' : 'Short'} {p.leverage}x</span></b>
+                            <span>{p.name}{m?.isClosed ? ' · mercado fechado' : ''}</span>
+                          </div>
+                          <div className="poolval">
+                            <div className="num">{usd(val)}</div>
+                            <div className={`num ${u >= 0 ? 'up' : 'down'}`}>{(u >= 0 ? '+' : '−') + '$' + fmt(Math.abs(u))}</div>
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                          <div className="kv"><span className="k">Tamanho</span><span className="v num">{fmt(p.size, p.size < 10 ? 4 : 2)} {p.symbol}</span></div>
+                          <div className="kv"><span className="k">Entrada</span><span className="v num">{usd(p.entry_price)}</span></div>
+                          <div className="kv"><span className="k">Mark {m ? <span className={`chip ${(m.chg24 || 0) >= 0 ? 'up' : 'down'}`}>{pct(m.chg24 || 0)}</span> : null}</span><span className="v num">{mark > 0 ? usd(mark) : '—'}</span></div>
+                          <div className="kv"><span className="k">Est. liquidação</span><span className="v num" style={{ color: '#F5A623' }}>{liq != null && liq > 0.001 ? usd(liq) : '—'}</span></div>
+                          <div className="kv"><span className="k">uPnL (ROE)</span><span className={`v num ${u >= 0 ? 'up' : 'down'}`}>{(u >= 0 ? '+' : '−') + '$' + fmt(Math.abs(u))} ({(roe >= 0 ? '+' : '') + fmt(roe, 1)}%)</span></div>
+                          <div className="kv"><span className="k">Margem</span><span className="v num">{usd(p.margin)}</span></div>
+                          <div className="kv"><span className="k">Funding (próx.)</span><span className={`v num ${funding > 0 ? 'down' : funding < 0 ? 'up' : ''}`}>{funding ? (funding > 0 ? '−' : '+') + fmt(Math.abs(funding) * 100, 4) + '%' : '—'}</span></div>
+                        </div>
+                        {dist != null && (
+                          <div style={{ marginTop: 10 }}>
+                            <div className="niche-h" style={{ margin: '0 2px 5px' }}>Distância até liquidação: <b className={distTone === 'down' ? 'down' : distTone === 'up' ? 'up' : ''} style={distTone === 'warn' ? { color: '#F5A623' } : undefined}>{fmt(Math.abs(dist), 1)}%</b></div>
+                            <div className="liqbar"><div className="liqbar-fill" style={{ width: `${Math.min(100, Math.max(3, 100 - Math.min(100, Math.abs(dist))))}%`, background: distTone === 'down' ? 'var(--red)' : distTone === 'warn' ? '#F5A623' : 'var(--green)' }} /></div>
+                          </div>
+                        )}
+                        <div className="grid2" style={{ marginTop: 14 }}>
+                          <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href="https://app.ondoperps.xyz/" target="_blank" rel="noreferrer">Gerenciar na Ondo ↗</a>
+                          <button className="btn ghost" onClick={() => setPerpClose({ id: p.id, symbol: p.symbol, side: p.side, size: p.size, entry_price: p.entry_price, leverage: p.leverage, price: mark > 0 ? String(mark) : '' })}>Encerrar</button>
+                        </div>
+                        <div style={{ textAlign: 'center', marginTop: 8 }}><a onClick={() => setPerpForm({ id: p.id, market: p.market, symbol: p.symbol, name: p.name, side: p.side, leverage: p.leverage, margin: String(p.margin), entry: String(p.entry_price), note: p.note || '' })} style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>editar dados</a></div>
+                      </div>
+                    )
+                  })}
+                  {openPos.length === 0 && <p className="foot-note" style={{ padding: '14px 8px' }}>Nenhuma posição aberta. Toque em <b>Abrir posição</b>, execute na Ondo e registre aqui para acompanhar uPnL, liquidação e funding ao vivo.</p>}
+                </div>
+
+                {/* Histórico encerrado */}
+                {closedPos.length > 0 && (
+                  <div className="card section-gap">
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>Encerradas</div>
+                    {closedPos.map(p => (
+                      <div className="kv" key={p.id}>
+                        <span className="k" style={{ fontSize: 12.5 }}>{p.symbol} <span className={`side-pill sm ${p.side}`}>{p.side === 'long' ? 'L' : 'S'} {p.leverage}x</span> <span style={{ color: 'var(--faint)' }}>{dBR(p.closed_at || '')}</span></span>
+                        <span className={`v num ${(p.realized_pnl || 0) >= 0 ? 'up' : 'down'}`}>{((p.realized_pnl || 0) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(p.realized_pnl || 0))} <a onClick={() => delPerp(p.id!)} style={{ color: 'var(--faint)', cursor: 'pointer', marginLeft: 6 }}>✕</a></span>
+                      </div>
+                    ))}
+                    {(() => { const tot = closedPos.reduce((s, p) => s + (p.realized_pnl || 0), 0); return (
+                      <div className="kv" style={{ borderTop: '1px solid var(--line)', marginTop: 6, paddingTop: 8 }}><span className="k"><b>Total realizado</b></span><span className={`v num ${tot >= 0 ? 'up' : 'down'}`}><b>{(tot >= 0 ? '+' : '−') + '$' + fmt(Math.abs(tot))}</b></span></div>
+                    )})()}
+                  </div>
+                )}
+
+                <p className="foot-note"><b style={{ color: 'var(--pink-bright)' }}>Perps</b> = futuros perpétuos alavancados na Ondo (ações, índices e commodities tokenizados, USD-settled, cross margin). A execução é feita na Ondo; o Tiger acompanha mark, uPnL, funding e liquidação ao vivo. Alavancagem multiplica ganho <b>e</b> perda e pode zerar a posição na liquidação. Não é recomendação — opere por sua conta e risco.</p>
+              </>)
+            })()}
+          </section>
+
           {/* APORTES */}
           <section className={`screen ${tab === 'aportes' ? 'active' : ''}`}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -1377,6 +1574,7 @@ export default function DashboardApp({
             ['lab', 'BTC Lab', <><path key="a" d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3" /></>],
             ['tiger100', 'T-100', <><path key="a" d="M4 19V5M4 19h16M8 16l4-5 3 3 5-7" /></>],
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
+            ['perps', 'Perps', <><path key="a" d="M3 17l5-5 3 3 4-6 3 4" /><path key="b" d="M3 21h18" /><path key="c" d="M14 7h4v4" /></>],
             ['aportes', 'Aportes', <><path key="a" d="M7 17V9m0 0l-3 3m3-3l3 3" /><path key="b" d="M17 7v8m0 0l3-3m-3 3l-3-3" /></>],
             ['metas', 'Metas', <><circle key="a" cx="12" cy="12" r="8" /><circle key="b" cx="12" cy="12" r="3.2" /></>],
           ] as [Tab, string, React.ReactNode][]).map(([k, label, icon]) => {
@@ -1741,6 +1939,117 @@ export default function DashboardApp({
               <div className="grid2"><div className="field"><label>Rede (p/ estatísticas)</label><input value={poolForm.network || 'base'} onChange={e => setPoolForm({ ...poolForm, network: e.target.value })} placeholder="base" /></div><div className="field"><label>Endereço da pool (tração)</label><input value={poolForm.pool_address || ''} onChange={e => setPoolForm({ ...poolForm, pool_address: e.target.value })} placeholder="0x... (opcional)" /></div></div>
               <div className="grid2"><div className="field"><label>ID da posição (p/ sincronizar taxas)</label><input value={poolForm.position_id || ''} onChange={e => setPoolForm({ ...poolForm, position_id: e.target.value })} placeholder="ex: 3831528 (NFT ID)" /></div><div className="field" /></div>
               <div className="grid2" style={{ marginTop: 16 }}>{poolForm.id && <button className="btn ghost danger" onClick={() => delPool(poolForm.id)}>Excluir</button>}<button className="btn ghost" onClick={() => setPoolForm(null)}>Cancelar</button><button className="btn" onClick={savePool}>Salvar</button></div>
+            </div></div>
+          </div>
+        )}
+
+        {/* ABRIR / EDITAR POSIÇÃO PERP */}
+        {perpForm && (() => {
+          const mk = perpMkts[perpForm.symbol]
+          const meta = perpForm.symbol ? metaFor(perpForm.symbol) : { maxLev: 10, klass: 'equity' as const }
+          const maxLev = mk?.maxLev || meta.maxLev
+          const mmr = mk?.mmr ?? mmrFor(maxLev)
+          const entry = num(perpForm.entry), margin = num(perpForm.margin), lev = Math.max(1, Math.min(maxLev, Math.round(num(perpForm.leverage) || 1)))
+          const size = entry > 0 ? margin * lev / entry : 0
+          const notion = size * entry
+          const fee = notion * PERP_TAKER_FEE
+          // liq estimada com base no colateral atual da conta (aprox.; refinada na tela após registrar)
+          const liq = size > 0 ? liqPrice({ side: perpForm.side, size, entry_price: entry, mmr }, perpCollateral || margin) : null
+          const filtered = perpMktList.filter(m => !perpPick || m.symbol.includes(perpPick.toUpperCase()) || m.name.toUpperCase().includes(perpPick.toUpperCase()))
+          return (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setPerpForm(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>{perpForm.id ? '✎ Editar posição' : '⚡ Abrir posição'}</h3>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Escolha o mercado e os parâmetros, <b>execute na Ondo</b> e registre aqui para acompanhar ao vivo.</p>
+
+              {!perpForm.id && (
+                <div className="field" style={{ marginTop: 12 }}><label>Mercado</label>
+                  <input value={perpPick} onChange={e => setPerpPick(e.target.value)} placeholder="Buscar: CRCL, NVDA, TSLA, Ouro…" />
+                </div>
+              )}
+              {!perpForm.id && perpPick && filtered.length > 0 && (
+                <div className="card" style={{ padding: 6, marginTop: 6, maxHeight: 220, overflowY: 'auto' }}>
+                  {filtered.slice(0, 24).map(m => (
+                    <div key={m.symbol} onClick={() => pickPerpMkt(m)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, cursor: 'pointer', borderRadius: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}><b style={{ fontSize: 13 }}>{m.symbol}</b> <span style={{ color: 'var(--muted)', fontSize: 11 }}>{m.name}</span> <span className="chip" style={{ background: 'rgba(168,85,247,.15)', color: 'var(--purple)' }}>{m.maxLev}x</span></div>
+                      {m.last > 0 && <span className="num" style={{ fontSize: 12 }}>{usd(m.last)}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {perpForm.symbol && (
+                <div className="card" style={{ marginTop: 8, background: 'rgba(168,85,247,.08)', border: '1px solid rgba(168,85,247,.3)' }}>
+                  <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: 'var(--purple)' }}>✓ <b>{perpForm.symbol}</b> · {perpForm.name} · máx {maxLev}x · MMR {fmt(mmr * 100, 1)}%{mk?.last ? <> · mark <b>{usd(mk.last)}</b></> : ''}</p>
+                </div>
+              )}
+
+              <div className="field"><label>Direção</label>
+                <div className="segbar">
+                  {(['long', 'short'] as PerpSide[]).map(s => (
+                    <button key={s} className={perpForm.side === s ? 'seg on' : 'seg'} onClick={() => setPerpForm({ ...perpForm, side: s })} style={perpForm.side === s ? { background: s === 'long' ? 'linear-gradient(135deg,#0f9d63,#2BFF9A)' : 'linear-gradient(135deg,#B21548,var(--red))' } : undefined}>{s === 'long' ? '▲ Long' : '▼ Short'}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="field"><label>Alavancagem · {lev}x <span style={{ color: 'var(--muted)' }}>(máx {maxLev}x)</span></label>
+                <input type="range" min={1} max={maxLev} step={1} value={lev} onChange={e => setPerpForm({ ...perpForm, leverage: e.target.value })} style={{ width: '100%' }} />
+              </div>
+
+              <div className="grid2">
+                <div className="field"><label>Margem (USDC)</label><input inputMode="decimal" value={perpForm.margin} onChange={e => setPerpForm({ ...perpForm, margin: e.target.value })} placeholder="ex: 20" /></div>
+                <div className="field"><label>Preço de entrada U$</label><input inputMode="decimal" value={perpForm.entry} onChange={e => setPerpForm({ ...perpForm, entry: e.target.value })} placeholder="ex: 91.09" /></div>
+              </div>
+              {mk?.last ? <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Mark agora: <b>{usd(mk.last)}</b> · <a onClick={() => setPerpForm({ ...perpForm, entry: String(mk.last) })} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }}>usar como entrada</a></p> : null}
+
+              <div className="modal-preview" style={{ flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>Tamanho da posição</span><b className="num">{size > 0 ? fmt(size, size < 10 ? 4 : 2) + ' ' + perpForm.symbol : '—'}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>Valor (notional)</span><b className="num">{usd(notion)}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>Est. liquidação</span><b className="num" style={{ color: '#F5A623' }}>{liq != null && liq > 0.001 ? usd(liq) : '—'}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>Taxa de entrada (taker)</span><b className="num">{usd(fee)}</b></div>
+              </div>
+
+              <a className="btn" style={{ textDecoration: 'none', textAlign: 'center', marginTop: 14, background: 'linear-gradient(135deg,#6D28D9,#A855F7)' }} href="https://app.ondoperps.xyz/" target="_blank" rel="noreferrer">Abrir na Ondo Perps ↗</a>
+              <div className="grid2" style={{ marginTop: 10 }}>
+                {perpForm.id && <button className="btn ghost danger" onClick={() => delPerp(perpForm.id)}>Excluir</button>}
+                <button className="btn ghost" onClick={() => setPerpForm(null)}>Cancelar</button>
+                <button className="btn" onClick={savePerp}>{perpForm.id ? 'Salvar' : 'Registrar posição'}</button>
+              </div>
+            </div></div>
+          </div>
+          )
+        })()}
+
+        {/* ENCERRAR POSIÇÃO PERP */}
+        {perpClose && (() => {
+          const px = num(perpClose.price), dir = perpClose.side === 'long' ? 1 : -1
+          const gross = px > 0 ? dir * perpClose.size * (px - perpClose.entry_price) : 0
+          const fees = px > 0 ? (perpClose.size * perpClose.entry_price + perpClose.size * px) * PERP_TAKER_FEE : 0
+          const net = gross - fees
+          return (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setPerpClose(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>Encerrar {perpClose.symbol} <span className={`side-pill ${perpClose.side}`}>{perpClose.side === 'long' ? 'Long' : 'Short'} {perpClose.leverage}x</span></h3>
+              <div className="field" style={{ marginTop: 10 }}><label>Preço de fechamento U$</label><input inputMode="decimal" value={perpClose.price} onChange={e => setPerpClose({ ...perpClose, price: e.target.value })} placeholder="preço de saída" /></div>
+              <div className="modal-preview" style={{ flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>PnL bruto</span><b className={`num ${gross >= 0 ? 'up' : 'down'}`}>{(gross >= 0 ? '+' : '−') + '$' + fmt(Math.abs(gross))}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span>Taxas (entrada+saída)</span><b className="num">−{usd(fees).slice(1)}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}><span><b>PnL líquido</b></span><b className={`num ${net >= 0 ? 'up' : 'down'}`}>{(net >= 0 ? '+' : '−') + '$' + fmt(Math.abs(net))}</b></div>
+              </div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setPerpClose(null)}>Cancelar</button><button className="btn" onClick={closePerp}>Confirmar fechamento</button></div>
+            </div></div>
+          </div>
+          )
+        })()}
+
+        {/* EDITAR COLATERAL DA CONTA PERP */}
+        {perpAcctForm !== null && (
+          <div className="modal" onClick={e => { if (e.target === e.currentTarget) setPerpAcctForm(null) }}>
+            <div className="sheet"><div className="grabber" /><div className="sheet-scroll">
+              <h3>💰 Colateral da conta</h3>
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4 }}>Total de colateral/equity depositado na Ondo (USDC). É a base do cálculo de liquidação em cross margin — copie o valor de <b>Equity</b> da sua conta na Ondo para bater exatamente.</p>
+              <div className="field" style={{ marginTop: 12 }}><label>Colateral (USDC)</label><input inputMode="decimal" value={perpAcctForm} onChange={e => setPerpAcctForm(e.target.value)} placeholder="ex: 45" /></div>
+              <div className="grid2" style={{ marginTop: 16 }}><button className="btn ghost" onClick={() => setPerpAcctForm(null)}>Cancelar</button><button className="btn" onClick={savePerpCollateral}>Salvar</button></div>
             </div></div>
           </div>
         )}
