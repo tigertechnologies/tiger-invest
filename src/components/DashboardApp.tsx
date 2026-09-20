@@ -404,6 +404,16 @@ export default function DashboardApp({
   const poolsVal = useMemo(() => pools.reduce((s, p) => s + p.current_value, 0), [pools])
   const poolsInv = useMemo(() => pools.reduce((s, p) => s + p.aporte, 0), [pools])
 
+  // Perps: equity da conta (colateral + uPnL) = capital real na Ondo. NÃO é o notional.
+  const perpSum = useMemo(() => accountSummary(
+    perps, perpCollateral,
+    (p) => perpMkts[p.symbol]?.last || 0,
+    (p) => perpMkts[p.symbol]?.mmr ?? mmrFor(metaFor(p.symbol).maxLev),
+  ), [perps, perpCollateral, perpMkts])
+  const perpsActive = perpCollateral > 0 || perps.some(p => p.status === 'open')
+  const perpsEquity = Math.max(0, perpSum.equity)
+  const perpsPl = perpCollateral ? perpSum.totalUpnl / perpCollateral * 100 : 0
+
   const t = useMemo(() => {
     const sum = (a: Holding[]) => a.reduce((s, h) => s + valOf(h), 0)
     const inv = (a: Holding[]) => a.reduce((s, h) => s + h.invested, 0)
@@ -411,9 +421,9 @@ export default function DashboardApp({
     const cash = priced.filter(h => h.kind === 'cash')
     const criptoVal = sum(crypto) + sum(stock), criptoInv = inv(crypto) + inv(stock)
     const cashVal = sum(cash)
-    const riskInv = criptoInv + poolsInv, riskVal = criptoVal + poolsVal
-    return { patr: criptoVal + cashVal + poolsVal, criptoVal, criptoInv, cashVal, riskInv, pl: riskVal - riskInv, totalInv: riskInv + inv(cash), aportTotal: riskInv + inv(cash) }
-  }, [priced, poolsVal, poolsInv])
+    const riskInv = criptoInv + poolsInv + perpCollateral, riskVal = criptoVal + poolsVal + perpsEquity
+    return { patr: criptoVal + cashVal + poolsVal + perpsEquity, criptoVal, criptoInv, cashVal, riskInv, pl: riskVal - riskInv, totalInv: riskInv + inv(cash), aportTotal: riskInv + inv(cash) }
+  }, [priced, poolsVal, poolsInv, perpsEquity, perpCollateral])
 
   const plpct = t.riskInv ? (t.pl / t.riskInv) * 100 : 0
   const criptoPl = t.criptoInv ? ((t.criptoVal - t.criptoInv) / t.criptoInv) * 100 : 0
@@ -434,8 +444,9 @@ export default function DashboardApp({
       { n: 'Ações', v: priced.filter(h => h.kind === 'stock').reduce((a, h) => a + valOf(h), 0), c: '#7C5CFF' },
       { n: 'Caixa', v: priced.filter(h => h.kind === 'cash').reduce((a, h) => a + valOf(h), 0), c: '#9D7CFF' },
       { n: 'Pools', v: poolsVal, c: '#2BFFC6' },
+      { n: 'Perps', v: perpsEquity, c: '#F5A623' },
     ].filter(x => x.v > 0)
-  }, [priced, poolsVal])
+  }, [priced, poolsVal, perpsEquity])
   const donutTot = cats.reduce((s, x) => s + x.v, 0) || 1
   let off = 0
   const segs = cats.map((x, i) => { const p = x.v / donutTot * 100; const s = (<circle key={i} cx="21" cy="21" r="15.915" fill="transparent" stroke={x.c} strokeWidth="5.5" strokeDasharray={`${p} ${100 - p}`} strokeDashoffset={25 - off} />); off += p; return s })
@@ -982,6 +993,7 @@ export default function DashboardApp({
               <div className="stat"><div className="k">Ações / ETFs</div><div className="v num">{usd(stockVal)}</div><div className={`s num ${stockPl >= 0 ? 'up' : 'down'}`}>{pct(stockPl)}</div></div>
               <div className="stat"><div className="k">Caixa</div><div className="v num">{usd(t.cashVal)}</div><div className="s" style={{ color: 'var(--muted)' }}>reserva</div></div>
               <div className="stat"><div className="k">Pools</div><div className="v num">{usd(poolsVal)}</div><div className={`s num ${poolPl >= 0 ? 'up' : 'down'}`}>{pct(poolPl)}</div></div>
+              {perpsActive && <div className="stat"><div className="k">Perps</div><div className="v num">{usd(perpsEquity)}</div><div className={`s num ${perpSum.totalUpnl >= 0 ? 'up' : 'down'}`}>{perpCollateral ? pct(perpsPl) : '—'}</div></div>}
             </div>
           </section>
 
