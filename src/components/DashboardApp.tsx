@@ -16,7 +16,7 @@ import {
 } from '@/lib/perps'
 import { emissionFor, emissionTone, dilutionAdjusted } from '@/lib/inflation'
 
-type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
+type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pulso' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
 const agg = (arr: string[]) => { const u = uniq(arr); return u.length === 0 ? '—' : u.length === 1 ? u[0] : 'várias' }
 const num = (v: any) => parseFloat(String(v).replace(',', '.')) || 0
@@ -51,7 +51,7 @@ export default function DashboardApp({
   const RANK: Record<string, number> = { start: 1, pro: 2, alpha: 3 }
   const rank = RANK[plan] || 1
   const has = (min: number) => rank >= min
-  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, perps: 2, aportes: 3, lab: 2, tiger100: 1 }
+  const TAB_MIN: Record<string, number> = { inicio: 1, carteira: 1, cotacao: 1, metas: 1, pools: 1, radar: 2, pulso: 2, perps: 2, aportes: 3, lab: 2, tiger100: 1 }
   const PLAN_NAME: Record<number, string> = { 2: 'TIGER PRO', 3: 'TIGER ALPHA' }
   const [upgrade, setUpgrade] = useState<{ tier: number; feature: string } | null>(null)
   // Aviso de renovação (aparece 5 dias antes, até o dia do vencimento)
@@ -163,6 +163,8 @@ export default function DashboardApp({
   const [perpClose, setPerpClose] = useState<any | null>(null)
   const [perpAcctForm, setPerpAcctForm] = useState<string | null>(null)
   const [perpPick, setPerpPick] = useState('')
+  const [pulse, setPulse] = useState<any | null>(null)
+  const [pulseLoading, setPulseLoading] = useState(false)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
@@ -277,6 +279,17 @@ export default function DashboardApp({
       fetch('/api/radar').then(r => r.json()).then(d => setRadar(d)).catch(() => {}).finally(() => setRadarLoading(false))
     }
   }, [tab, radar, radarLoading])
+
+  useEffect(() => {
+    if (tab !== 'pulso') return
+    let active = true
+    const load = (first: boolean) => {
+      if (first && !pulse) setPulseLoading(true)
+      fetch('/api/pulse').then(r => r.json()).then(d => { if (active) setPulse(d) }).catch(() => {}).finally(() => { if (active) setPulseLoading(false) })
+    }
+    load(true); const t = setInterval(() => load(false), 90000)
+    return () => { active = false; clearInterval(t) }
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadIdeas = (net: string) => {
     setIdeasNet(net); setIdeasLoading(true)
@@ -1497,6 +1510,80 @@ export default function DashboardApp({
             <p className="foot-note">Dados de mercado (CoinGecko). Cardápio para pesquisa — não é recomendação. As pools ficam na aba <b>Pools</b>. Estude cada ativo antes de investir.</p>
           </section>
 
+          {/* PULSO — inteligência de mercado */}
+          <section className={`screen ${tab === 'pulso' ? 'active' : ''}`}>
+            <div className="eyebrow">Pulso do mercado</div>
+            {pulseLoading && !pulse && <div>{[0, 1, 2].map(i => <div key={i} className="skel skel-row" style={{ height: 90, borderRadius: 16, marginBottom: 12 }} />)}</div>}
+            {pulse && (<>
+              {/* TERMÔMETRO DE CICLO */}
+              {pulse.score != null && (() => {
+                const s = pulse.score
+                const tone = pulse.regime === 'acumular' ? 'var(--green)' : pulse.regime === 'distribuir' ? 'var(--red)' : '#F5A623'
+                return (
+                  <div className="card">
+                    <div className="eyebrow" style={{ marginBottom: 10 }}>Termômetro de ciclo</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <b style={{ fontFamily: 'Sora', fontSize: 26, color: tone, textTransform: 'uppercase', letterSpacing: 1 }}>{pulse.regime}</b>
+                      <span className="num" style={{ fontSize: 22, color: tone }}>{s}<span style={{ fontSize: 12, color: 'var(--muted)' }}>/100</span></span>
+                    </div>
+                    <div className="cyclebar"><div className="cyclebar-mark" style={{ left: `${s}%` }} /></div>
+                    <div className="cyclebar-lbls"><span>Acumular</span><span>Neutro</span><span>Distribuir</span></div>
+                    <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10 }}>{pulse.regimeLabel}</p>
+                    <div className="pooltraction" style={{ marginTop: 12 }}>
+                      <div className="pt-cell"><span>Medo & Ganância</span><b style={{ color: tone }}>{pulse.fng ?? '—'}{pulse.fngLabel ? '' : ''}</b></div>
+                      <div className="pt-cell"><span>Amplitude 24h</span><b className={pulse.breadth != null && pulse.breadth >= 50 ? 'up' : 'down'}>{pulse.breadth != null ? pulse.breadth + '% ↑' : '—'}</b></div>
+                      <div className="pt-cell"><span>Mercado 24h</span><b className={pulse.totalChg24 != null && pulse.totalChg24 >= 0 ? 'up' : 'down'}>{pulse.totalChg24 != null ? pct(pulse.totalChg24) : '—'}</b></div>
+                    </div>
+                    <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8, fontSize: 10 }}>Leitura <b>contrária</b>: medo extremo costuma marcar fundos (acumular), ganância extrema marca topos (distribuir). É sentimento, não garantia — combine com sua análise.</p>
+                  </div>
+                )
+              })()}
+
+              {/* FLUXO DE CAPITAL */}
+              <div className="card section-gap">
+                <div className="eyebrow" style={{ marginBottom: 10 }}>Fluxo de capital</div>
+                <div className={`rangestatus ${pulse.domDir === 'btc' ? 'rs-out' : pulse.domDir === 'alts' ? 'rs-in' : 'rs-warn'}`}>
+                  {pulse.domDir === 'btc' ? '🛡 Capital consolidando no BTC — modo defensivo' : pulse.domDir === 'alts' ? '🚀 Capital rotacionando para altcoins — apetite a risco' : '⚖ Capital equilibrado entre BTC e alts'}
+                </div>
+                {pulse.btcDom != null && <div className="kv"><span className="k">Dominância do BTC</span><span className="v num">{fmt(pulse.btcDom, 1)}%</span></div>}
+                {(pulse.majors || []).map((m: any) => (
+                  <div className="kv" key={m.symbol}><span className="k">{m.symbol} <span style={{ color: 'var(--muted)' }}>24h</span></span><span className={`v num ${m.ch24 >= 0 ? 'up' : 'down'}`}>{pct(m.ch24)}{m.ch7d != null && <span style={{ color: 'var(--muted)', marginLeft: 8, fontSize: 11 }}>{pct(m.ch7d)} 7d</span>}</span></div>
+                ))}
+                {pulse.narratives?.up?.length > 0 && (<>
+                  <div className="niche-h" style={{ margin: '14px 2px 8px' }}>Setores atraindo capital (24h)</div>
+                  {pulse.narratives.up.map((n: any, i: number) => (
+                    <div className="kv" key={'u' + i}><span className="k" style={{ fontSize: 12.5 }}>▲ {n.name}</span><span className="v num up">{pct(n.chg24)}</span></div>
+                  ))}
+                  {pulse.narratives.down?.slice(0, 2).map((n: any, i: number) => (
+                    <div className="kv" key={'d' + i}><span className="k" style={{ fontSize: 12.5 }}>▼ {n.name}</span><span className="v num down">{pct(n.chg24)}</span></div>
+                  ))}
+                </>)}
+              </div>
+
+              {/* HYPE AGORA */}
+              <div className="card section-gap">
+                <div className="eyebrow" style={{ marginBottom: 10 }}>🔥 Hype agora</div>
+                {(pulse.trending || []).length > 0 && (<>
+                  <div className="niche-h" style={{ margin: '0 2px 8px' }}>Em alta nas buscas</div>
+                  <div className="hype-tags">
+                    {pulse.trending.map((c: any, i: number) => (
+                      <span className="hype-tag" key={i}>{c.symbol}{c.ch24 != null && <b className={c.ch24 >= 0 ? 'up' : 'down'} style={{ marginLeft: 5 }}>{pct(c.ch24)}</b>}</span>
+                    ))}
+                  </div>
+                </>)}
+                {(pulse.hype || []).length > 0 && (<>
+                  <div className="niche-h" style={{ margin: '16px 2px 8px' }}>Maiores altas 24h (com liquidez)</div>
+                  {pulse.hype.map((c: any, i: number) => (
+                    <div className="kv" key={i}><span className="k" style={{ fontSize: 12.5 }}><b>{c.symbol}</b> <span style={{ color: 'var(--muted)' }}>{c.name}</span></span><span className="v"><span className="num up">{pct(c.ch24)}</span>{c.ch7d != null && <span className="num" style={{ color: 'var(--muted)', marginLeft: 8, fontSize: 11 }}>{pct(c.ch7d)} 7d</span>}</span></div>
+                  ))}
+                </>)}
+              </div>
+
+              <p className="foot-note">Sentimento (alternative.me) + mercado, dominância e narrativas (CoinGecko). Fotografia do momento, não recomendação — hype passa rápido e vira armadilha; use como contexto, não como gatilho de compra.</p>
+            </>)}
+            {!pulseLoading && !pulse && <p className="foot-note">Não consegui puxar os dados agora — tente reabrir em instantes.</p>}
+          </section>
+
           <section className={`screen ${tab === 'lab' ? 'active' : ''}`}>
             {tab === 'lab' && <BtcLab />}
           </section>
@@ -1590,6 +1677,7 @@ export default function DashboardApp({
             ['carteira', 'Carteira', <><rect key="a" x="3" y="6" width="18" height="13" rx="2" /><path key="b" d="M16 12h3" /></>],
             ['cotacao', 'Cotação', <path key="a" d="M4 18l5-6 4 3 6-8M4 18h16" />],
             ['radar', 'Radar', <><circle key="a" cx="12" cy="12" r="9" /><circle key="b" cx="12" cy="12" r="4.5" /><path key="c" d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>],
+            ['pulso', 'Pulso', <><path key="a" d="M3 12h4l2-6 4 14 2-8h6" /></>],
             ['lab', 'BTC Lab', <><path key="a" d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3" /></>],
             ['tiger100', 'T-100', <><path key="a" d="M4 19V5M4 19h16M8 16l4-5 3 3 5-7" /></>],
             ['pools', 'Pools', <path key="a" d="M12 3s6 6 6 10a6 6 0 01-12 0c0-4 6-10 6-10z" />],
