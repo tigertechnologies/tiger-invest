@@ -710,13 +710,16 @@ export default function DashboardApp({
   }
   async function savePerp() {
     const f = perpForm; if (!f?.symbol) { flash('Escolha um mercado', 'err'); return }
-    const entry = num(f.entry), margin = num(f.margin), lev = Math.max(1, Math.round(num(f.leverage) || 1))
-    if (!(entry > 0) || !(margin > 0)) { flash('Preencha margem e preço de entrada', 'err'); return }
-    const size = margin * lev / entry
+    const entry = num(f.entry), lev = Math.max(1, Math.round(num(f.leverage) || 1))
+    const sizeInput = num(f.size), marginInput = num(f.margin)
+    if (!(entry > 0) || (!(marginInput > 0) && !(sizeInput > 0))) { flash('Preencha o preço de entrada e (margem OU tamanho)', 'err'); return }
+    // Se o tamanho foi informado (posição já aberta), ele manda; senão deriva da margem.
+    const size = sizeInput > 0 ? sizeInput : marginInput * lev / entry
+    const margin = sizeInput > 0 ? size * entry / lev : marginInput
     const payload = {
       user_id: userId, market: f.market, symbol: f.symbol, name: f.name,
       side: f.side, leverage: lev, size, entry_price: entry, margin,
-      opened_at: new Date().toISOString().slice(0, 10), status: 'open', note: f.note || '',
+      opened_at: f.opened_at || new Date().toISOString().slice(0, 10), status: 'open', note: f.note || '',
     }
     if (f.id) await supabase.from('perps_positions').update(payload).eq('id', f.id)
     else await supabase.from('perps_positions').insert(payload)
@@ -1310,7 +1313,7 @@ export default function DashboardApp({
                           <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href="https://app.ondoperps.xyz/" target="_blank" rel="noreferrer">Gerenciar na Ondo ↗</a>
                           <button className="btn ghost" onClick={() => setPerpClose({ id: p.id, symbol: p.symbol, side: p.side, size: p.size, entry_price: p.entry_price, leverage: p.leverage, price: mark > 0 ? String(mark) : '' })}>Encerrar</button>
                         </div>
-                        <div style={{ textAlign: 'center', marginTop: 8 }}><a onClick={() => setPerpForm({ id: p.id, market: p.market, symbol: p.symbol, name: p.name, side: p.side, leverage: p.leverage, margin: String(p.margin), entry: String(p.entry_price), note: p.note || '' })} style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>editar dados</a></div>
+                        <div style={{ textAlign: 'center', marginTop: 8 }}><a onClick={() => setPerpForm({ id: p.id, market: p.market, symbol: p.symbol, name: p.name, side: p.side, leverage: p.leverage, margin: String(p.margin), size: String(p.size), entry: String(p.entry_price), opened_at: p.opened_at, note: p.note || '' })} style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>editar dados</a></div>
                       </div>
                     )
                   })}
@@ -1949,8 +1952,10 @@ export default function DashboardApp({
           const meta = perpForm.symbol ? metaFor(perpForm.symbol) : { maxLev: 10, klass: 'equity' as const }
           const maxLev = mk?.maxLev || meta.maxLev
           const mmr = mk?.mmr ?? mmrFor(maxLev)
-          const entry = num(perpForm.entry), margin = num(perpForm.margin), lev = Math.max(1, Math.min(maxLev, Math.round(num(perpForm.leverage) || 1)))
-          const size = entry > 0 ? margin * lev / entry : 0
+          const entry = num(perpForm.entry), lev = Math.max(1, Math.min(maxLev, Math.round(num(perpForm.leverage) || 1)))
+          const sizeInput = num(perpForm.size), marginInput = num(perpForm.margin)
+          const size = sizeInput > 0 ? sizeInput : (entry > 0 ? marginInput * lev / entry : 0)
+          const margin = sizeInput > 0 ? size * entry / lev : marginInput
           const notion = size * entry
           const fee = notion * PERP_TAKER_FEE
           // liq estimada com base no colateral atual da conta (aprox.; refinada na tela após registrar)
@@ -1997,9 +2002,11 @@ export default function DashboardApp({
               </div>
 
               <div className="grid2">
-                <div className="field"><label>Margem (USDC)</label><input inputMode="decimal" value={perpForm.margin} onChange={e => setPerpForm({ ...perpForm, margin: e.target.value })} placeholder="ex: 20" /></div>
+                <div className="field"><label>Margem (USDC)</label><input inputMode="decimal" value={perpForm.margin || ''} onChange={e => setPerpForm({ ...perpForm, margin: e.target.value, size: '' })} placeholder="ex: 20" /></div>
                 <div className="field"><label>Preço de entrada U$</label><input inputMode="decimal" value={perpForm.entry} onChange={e => setPerpForm({ ...perpForm, entry: e.target.value })} placeholder="ex: 91.09" /></div>
               </div>
+              <div className="field"><label>Tamanho / Size <span style={{ color: 'var(--muted)' }}>(opcional — se a posição já está aberta)</span></label><input inputMode="decimal" value={perpForm.size || ''} onChange={e => setPerpForm({ ...perpForm, size: e.target.value })} placeholder={`ex: 1.1 ${perpForm.symbol || ''} — copie de Size na Ondo`} /></div>
+              {sizeInput > 0 && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Margem correspondente: <b>{usd(margin)}</b> (tamanho tem prioridade sobre a margem digitada)</p>}
               {mk?.last ? <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Mark agora: <b>{usd(mk.last)}</b> · <a onClick={() => setPerpForm({ ...perpForm, entry: String(mk.last) })} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }}>usar como entrada</a></p> : null}
 
               <div className="modal-preview" style={{ flexDirection: 'column', gap: 6 }}>
