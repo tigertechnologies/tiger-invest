@@ -14,6 +14,7 @@ import {
   PerpPosition, PerpMarket, PerpSide, metaFor, mmrFor, PERP_META, PERP_TAKER_FEE,
   upnl, notionalAt, liqPrice, liqDistancePct, accountSummary,
 } from '@/lib/perps'
+import { emissionFor, emissionTone, dilutionAdjusted } from '@/lib/inflation'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
@@ -938,9 +939,12 @@ export default function DashboardApp({
   const assetRow = (h: Holding) => {
     const v = valOf(h), pl = v - h.invested, plp = h.invested ? pl / h.invested * 100 : 0
     const real = t.patr ? v / t.patr * 100 : 0, denom = Math.max(h.meta_pct, real, 1)
+    const emi = h.kind === 'crypto' ? emissionFor(h.symbol) : null
+    const emiTone = emissionTone(emi)
+    const emiColor = emiTone === 'good' ? 'var(--green)' : emiTone === 'ok' ? '#9EE7C5' : emiTone === 'warn' ? '#F5A623' : emiTone === 'bad' ? 'var(--red)' : 'var(--muted)'
     return (<div className="asset" key={h.id} onClick={() => setDetail(holdings.find(x => x.id === h.id)!)}>
       <div className="sym" style={{ background: `linear-gradient(145deg,${h.color},${h.color}88)` }}>{h.symbol.slice(0, 4)}</div>
-      <div className="a-main"><div className="a-name">{h.name}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
+      <div className="a-main"><div className="a-name">{h.name}{emi != null && <span className="emi-chip" style={{ color: emiColor, borderColor: emiColor + '55' }} title="Emissão anual do token (inflação de oferta)">🪙 {fmt(Math.abs(emi), emi === Math.floor(emi) ? 0 : 1)}%{emi < 0 ? ' burn' : '/ano'}</span>}</div><div className="a-sub">{fmt(h.qty, h.qty < 1 ? 5 : 3)} · {usd(h.price)}</div>
         <div className="metabar"><div className="track"><div className="fill" style={{ width: `${Math.min(real / denom * 100, 100)}%` }} /><div className="goal" style={{ left: `${Math.min(h.meta_pct / denom * 100, 100)}%` }} /></div><div className="lbls"><span>real {fmt(real, 1)}%</span><span>meta {h.meta_pct}%</span></div></div></div>
       <div className="a-right"><div className="a-val">{usd(v)}</div><div className={`a-pl ${pl >= 0 ? 'up' : 'down'}`}>{pct(plp)}</div></div></div>)
   }
@@ -1726,6 +1730,32 @@ export default function DashboardApp({
                   )}
 
                   {has(2) ? (<>
+                  {h.kind === 'crypto' && emissionFor(h.symbol) != null && (() => {
+                    // LUCRO REAL descontando a EMISSÃO DO TOKEN (diluição da rede).
+                    const emi = emissionFor(h.symbol)!
+                    const da = dilutionAdjusted(h.invested, v, periodDays, emi)
+                    const tone = emissionTone(emi)
+                    const emiColor = tone === 'good' ? 'var(--green)' : tone === 'ok' ? '#9EE7C5' : tone === 'warn' ? '#F5A623' : 'var(--red)'
+                    const emiLabel = fmt(Math.abs(emi), emi === Math.floor(emi) ? 0 : 1) + '%' + (emi < 0 ? ' burn' : '/ano')
+                    return (
+                      <div className="card" style={{ marginTop: 12 }}>
+                        <div className="eyebrow" style={{ marginBottom: 8 }}>Lucro real · descontando a emissão do token</div>
+                        <div className="kv"><span className="k">Inflação do ativo (emissão)</span><span className="v num" style={{ color: emiColor }}>{emi < 0 ? '−' : ''}{emiLabel}</span></div>
+                        <div className="kv"><span className="k">Lucro nominal</span><span className={`v num ${da.lucroNominal >= 0 ? 'up' : 'down'}`}>{(da.lucroNominal >= 0 ? '+' : '−') + usd(Math.abs(da.lucroNominal)).slice(1)} ({(da.nominalPct >= 0 ? '+' : '') + fmt(da.nominalPct, 1)}%)</span></div>
+                        {periodDays > 0 && <div className="kv"><span className="k">Diluição no período ({fmt(da.years, 1)} ano{da.years >= 2 ? 's' : ''})</span><span className="v num" style={{ color: da.dilutionPct > 0 ? '#F5A623' : da.dilutionPct < 0 ? 'var(--green)' : 'var(--muted)' }}>{da.dilutionPct >= 0 ? '+' : ''}{fmt(da.dilutionPct, 1)}%</span></div>}
+                        <div className="kv" style={{ borderTop: '1px solid var(--line)', marginTop: 6, paddingTop: 8 }}><span className="k"><b>Lucro real (acima da diluição)</b></span><span className={`v num ${da.lucroReal >= 0 ? 'up' : 'down'}`}><b>{(da.lucroReal >= 0 ? '+' : '−') + usd(Math.abs(da.lucroReal)).slice(1)} ({(da.realPct >= 0 ? '+' : '') + fmt(da.realPct, 1)}%)</b></span></div>
+                        <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 8 }}>
+                          {periodDays <= 0
+                            ? <>Sem histórico de tempo de posse ainda — a diluição aparece conforme você segura o ativo.</>
+                            : emi < 0
+                              ? <>Token <b style={{ color: 'var(--green)' }}>deflacionário</b>: a oferta encolhe, então seu ganho real é <b>maior</b> que o nominal.</>
+                              : da.realPct >= 0
+                                ? <>Seu ganho <b>supera</b> a emissão do token — é valorização genuína, não só a moeda inflando.</>
+                                : <>Cuidado: o preço <b style={{ color: 'var(--red)' }}>não superou</b> a própria emissão. Parte (ou tudo) do "lucro" foi diluído por tokens novos.</>}
+                        </p>
+                      </div>
+                    )
+                  })()}
                   {sg ? <SigBody sg={sg} /> : h.kind === 'crypto' ? <p className="foot-note" style={{ marginTop: 14 }}>{sigTried ? 'Análise técnica indisponível para este ativo agora — tente reabrir em instantes.' : 'Analisando estrutura do gráfico…'}</p> : null}
                   {h.kind === 'crypto' && (() => {
                     const myLevels = levels.filter(l => l.symbol === h.symbol).sort((a, b) => b.price - a.price)
