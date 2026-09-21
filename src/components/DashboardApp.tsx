@@ -15,6 +15,7 @@ import {
   upnl, notionalAt, liqPrice, liqDistancePct, accountSummary,
 } from '@/lib/perps'
 import { emissionFor, emissionTone, dilutionAdjusted } from '@/lib/inflation'
+import { buildHealth, type Flag, type Severity } from '@/lib/health'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pulso' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
@@ -165,6 +166,7 @@ export default function DashboardApp({
   const [perpPick, setPerpPick] = useState('')
   const [pulse, setPulse] = useState<any | null>(null)
   const [pulseLoading, setPulseLoading] = useState(false)
+  const [healthOpen, setHealthOpen] = useState(false)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
@@ -448,6 +450,44 @@ export default function DashboardApp({
   const stockVal = priced.filter(h => h.kind === 'stock').reduce((a, h) => a + valOf(h), 0)
   const stockInv = holdings.filter(h => h.kind === 'stock').reduce((a, h) => a + h.invested, 0)
   const stockPl = stockInv ? (stockVal - stockInv) / stockInv * 100 : 0
+
+  // Saúde da carteira — scanner de risco sobre os próprios dados
+  const health = useMemo(() => {
+    // por símbolo: 1ª compra e se há stop
+    const bySym: Record<string, { firstDate: string; hasStop: boolean }> = {}
+    txs.forEach(x => {
+      const s = bySym[x.symbol] || (bySym[x.symbol] = { firstDate: x.buy_date, hasStop: false })
+      if ((x.buy_date || '') < s.firstDate) s.firstDate = x.buy_date
+      if ((x.stop_limit || 0) > 0) s.hasStop = true
+    })
+    const hh = priced.filter(h => h.kind === 'crypto' || h.kind === 'stock').map(h => {
+      const info = bySym[h.symbol]
+      const years = info ? daysSince(info.firstDate) / 365 : 0
+      const v = valOf(h)
+      const nominalPct = h.invested ? (v - h.invested) / h.invested * 100 : 0
+      return { symbol: h.symbol, kind: h.kind, value: v, metaPct: h.meta_pct, years, hasStop: !!info?.hasStop, emission: h.kind === 'crypto' ? emissionFor(h.symbol) : null, nominalPct }
+    })
+    // perps: margin ratio + menor distância até liquidação
+    const openP = perps.filter(p => p.status === 'open')
+    let minLiq: number | null = null
+    for (const p of openP) {
+      const m = perpMkts[p.symbol]; const mark = m?.last || p.entry_price
+      const mmr = m?.mmr ?? mmrFor(metaFor(p.symbol).maxLev)
+      const maintI = notionalAt(p.size, mark) * mmr
+      const u = upnl(p, mark)
+      const A = perpSum.equity - u - perpSum.maintMargin + maintI
+      const liq = liqPrice({ side: p.side, size: p.size, entry_price: p.entry_price, mmr }, A)
+      const d = liq != null ? liqDistancePct(p.side, mark, liq) : null
+      if (d != null && (minLiq == null || d < minLiq)) minLiq = d
+    }
+    return buildHealth({
+      patr: t.patr, holdings: hh, cashVal: t.cashVal, poolsVal,
+      perpsOpen: openP.map(p => ({ symbol: p.symbol, side: p.side, margin: p.margin, leverage: p.leverage })),
+      perpEquity: perpsEquity, perpCollateral, perpUpnl: perpSum.totalUpnl,
+      perpMarginRatio: perpSum.marginRatio, perpMinLiqDist: minLiq,
+      cycleRegime: pulse?.regime ?? null,
+    })
+  }, [priced, txs, t.patr, t.cashVal, poolsVal, perps, perpMkts, perpSum, perpsEquity, perpCollateral, pulse])
 
   const cats = useMemo(() => {
     const bs = (s: string) => priced.filter(h => h.symbol === s).reduce((a, h) => a + valOf(h), 0)
@@ -1001,6 +1041,45 @@ export default function DashboardApp({
                 <div className="hero-mini"><div className="k">Resultado</div><div className={`v num ${res >= 0 ? 'up' : 'down'}`}>{(res >= 0 ? '+' : '-') + usd(Math.abs(res)).slice(1)}</div></div>
               </div>
             </div>
+
+            {/* SAÚDE DA CARTEIRA */}
+            {(() => {
+              const statusColor = health.status === 'crit' ? 'var(--red)' : health.status === 'warn' ? '#F5A623' : 'var(--green)'
+              const statusLabel = health.status === 'crit' ? 'Requer atenção' : health.status === 'warn' ? 'Pontos de cuidado' : 'Saudável'
+              const crit = health.flags.filter(f => f.sev === 'crit').length
+              const warn = health.flags.filter(f => f.sev === 'warn').length
+              const sevColor = (s: Severity) => s === 'crit' ? 'var(--red)' : s === 'warn' ? '#F5A623' : s === 'info' ? 'var(--purple)' : 'var(--green)'
+              const sevIcon = (s: Severity) => s === 'crit' ? '⛔' : s === 'warn' ? '⚠️' : s === 'info' ? 'ℹ️' : '✓'
+              const shown = healthOpen ? health.flags : health.flags.slice(0, 2)
+              return (
+                <div className="card section-gap health-card" style={{ borderColor: statusColor + '44' }}>
+                  <div className="health-head" onClick={() => setHealthOpen(o => !o)}>
+                    <div className="health-ring" style={{ background: `conic-gradient(${statusColor} ${health.score * 3.6}deg, rgba(255,255,255,.07) 0)` }}>
+                      <span className="num" style={{ color: statusColor }}>{health.score}</span>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="eyebrow" style={{ margin: 0 }}>Saúde da carteira</div>
+                      <b style={{ color: statusColor, fontSize: 16, fontFamily: 'Sora' }}>{statusLabel}</b>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{health.flags.length === 0 ? 'Nenhuma bandeira levantada' : `${crit ? crit + ' crítico · ' : ''}${warn ? warn + ' cuidado · ' : ''}${health.flags.length} no total`}</div>
+                    </div>
+                    <span style={{ color: 'var(--muted)', fontSize: 20, transform: healthOpen ? 'rotate(180deg)' : 'none', transition: '.2s' }}>⌄</span>
+                  </div>
+                  {health.flags.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      {shown.map(f => (
+                        <div className="health-flag" key={f.id} style={{ borderLeftColor: sevColor(f.sev) }}>
+                          <div className="hf-top"><span>{sevIcon(f.sev)} <b>{f.title}</b></span><span className="hf-detail num" style={{ color: sevColor(f.sev) }}>{f.detail}</span></div>
+                          {healthOpen && <div className="hf-mean">{f.meaning}</div>}
+                        </div>
+                      ))}
+                      {!healthOpen && health.flags.length > 2 && <div className="health-more" onClick={() => setHealthOpen(true)}>ver todas as {health.flags.length} bandeiras + o que significam ⌄</div>}
+                    </div>
+                  )}
+                  {healthOpen && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10, fontSize: 10 }}>Espelho de risco dos seus próprios dados — mostra exposição, não prevê o mercado nem recomenda operações. Ausência de bandeira vermelha não é garantia de segurança.</p>}
+                </div>
+              )
+            })()}
+
             <div className="card section-gap"><div className="eyebrow">Alocação atual</div>
               <div className="donut-wrap"><div className="donut"><svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="15.915" fill="transparent" stroke="rgba(255,255,255,.05)" strokeWidth="5.5" />{segs}</svg><div className="center"><small>Total</small><b className="num">${fmt(donutTot, 0)}</b></div></div>
                 <div className="legend">{cats.map((x, i) => (<div className="leg" key={i}><span className="dot" style={{ background: x.c, color: x.c }} /><span>{x.n}</span><span className="lpct">{fmt(x.v / donutTot * 100, 1)}%</span></div>))}</div></div></div>
