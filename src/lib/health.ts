@@ -17,7 +17,7 @@ export type HealthInput = {
   holdings: HealthHolding[]
   cashVal: number
   poolsVal: number
-  perpsOpen: { symbol: string; side: string; margin: number; leverage: number }[]
+  perpsOpen: { symbol: string; side: string; margin: number; leverage: number; hasStop: boolean }[]
   perpEquity: number
   perpCollateral: number
   perpUpnl: number
@@ -63,9 +63,10 @@ export function buildHealth(inp: HealthInput): { score: number; status: Severity
     else if (d < 18) flags.push({ id: 'liq', sev: 'warn', title: 'Folga de liquidação baixa', detail: `Menor distância: ${d.toFixed(1)}%`, meaning: 'A posição mais exposta liquida com uma queda moderada no ativo.' })
   }
 
-  // 5) Posições alavancadas sem rede (stop/alvo)
-  if (inp.perpsOpen.length > 0) {
-    flags.push({ id: 'perp-nostop', sev: 'warn', title: 'Alavancagem sem rede', detail: `${inp.perpsOpen.length} posição(ões) alavancada(s) sem stop/alvo definido`, meaning: 'Alavancagem sem saída planejada é o ponto mais frágil — reversões rápidas comem o lucro e mais.' })
+  // 5) Posições alavancadas sem rede (stop)
+  const noStop = inp.perpsOpen.filter(p => !p.hasStop).length
+  if (noStop > 0) {
+    flags.push({ id: 'perp-nostop', sev: 'warn', title: 'Alavancagem sem rede', detail: `${noStop} de ${inp.perpsOpen.length} posição(ões) sem stop definido`, meaning: 'Alavancagem sem saída planejada é o ponto mais frágil — reversões rápidas comem o lucro e mais.' })
   }
 
   // 6) Lucro alavancado frágil (não realizado, grande sobre a margem)

@@ -482,7 +482,7 @@ export default function DashboardApp({
     }
     return buildHealth({
       patr: t.patr, holdings: hh, cashVal: t.cashVal, poolsVal,
-      perpsOpen: openP.map(p => ({ symbol: p.symbol, side: p.side, margin: p.margin, leverage: p.leverage })),
+      perpsOpen: openP.map(p => ({ symbol: p.symbol, side: p.side, margin: p.margin, leverage: p.leverage, hasStop: (p.sl ?? 0) > 0 })),
       perpEquity: perpsEquity, perpCollateral, perpUpnl: perpSum.totalUpnl,
       perpMarginRatio: perpSum.marginRatio, perpMinLiqDist: minLiq,
       cycleRegime: pulse?.regime ?? null,
@@ -784,6 +784,7 @@ export default function DashboardApp({
     const payload = {
       user_id: userId, market: f.market, symbol: f.symbol, name: f.name,
       side: f.side, leverage: lev, size, entry_price: entry, margin,
+      tp: num(f.tp) > 0 ? num(f.tp) : null, sl: num(f.sl) > 0 ? num(f.sl) : null,
       opened_at: f.opened_at || new Date().toISOString().slice(0, 10), status: 'open', note: f.note || '',
     }
     if (f.id) await supabase.from('perps_positions').update(payload).eq('id', f.id)
@@ -1410,6 +1411,17 @@ export default function DashboardApp({
                           <div className="kv"><span className="k">uPnL (ROE)</span><span className={`v num ${u >= 0 ? 'up' : 'down'}`}>{(u >= 0 ? '+' : '−') + '$' + fmt(Math.abs(u))} ({(roe >= 0 ? '+' : '') + fmt(roe, 1)}%)</span></div>
                           <div className="kv"><span className="k">Margem</span><span className="v num">{usd(p.margin)}</span></div>
                           <div className="kv"><span className="k">Funding (próx.)</span><span className={`v num ${funding > 0 ? 'down' : funding < 0 ? 'up' : ''}`}>{funding ? (funding > 0 ? '−' : '+') + fmt(Math.abs(funding) * 100, 4) + '%' : '—'}</span></div>
+                          {(() => {
+                            const isLong = p.side === 'long'
+                            const tpHit = p.tp && ((isLong && mark >= p.tp) || (!isLong && mark <= p.tp))
+                            const slHit = p.sl && ((isLong && mark <= p.sl) || (!isLong && mark >= p.sl))
+                            const near = (lvl?: number | null) => lvl && mark > 0 ? Math.abs(mark - lvl) / mark * 100 : null
+                            const tpNear = near(p.tp), slNear = near(p.sl)
+                            return (<>
+                              <div className="kv"><span className="k">🎯 Alvo / TP</span><span className="v num">{p.tp ? <>{usd(p.tp)} {tpHit ? <span className="chip up">atingido ✓</span> : tpNear != null && tpNear < 3 ? <span className="chip up">{fmt(tpNear, 1)}%</span> : null}</> : <span style={{ color: 'var(--faint)' }}>—</span>}</span></div>
+                              <div className="kv"><span className="k">🛑 Stop / SL</span><span className="v num">{p.sl ? <>{usd(p.sl)} {slHit ? <span className="chip down">rompido ⚠</span> : slNear != null && slNear < 3 ? <span className="chip down">{fmt(slNear, 1)}%</span> : null}</> : <span style={{ color: 'var(--faint)' }}>—</span>}</span></div>
+                            </>)
+                          })()}
                         </div>
                         {dist != null && (
                           <div style={{ marginTop: 10 }}>
@@ -1421,7 +1433,7 @@ export default function DashboardApp({
                           <a className="btn ghost" style={{ textDecoration: 'none', textAlign: 'center', lineHeight: '1.4' }} href="https://app.ondoperps.xyz/" target="_blank" rel="noreferrer">Gerenciar na Ondo ↗</a>
                           <button className="btn ghost" onClick={() => setPerpClose({ id: p.id, symbol: p.symbol, side: p.side, size: p.size, entry_price: p.entry_price, leverage: p.leverage, price: mark > 0 ? String(mark) : '' })}>Encerrar</button>
                         </div>
-                        <div style={{ textAlign: 'center', marginTop: 8 }}><a onClick={() => setPerpForm({ id: p.id, market: p.market, symbol: p.symbol, name: p.name, side: p.side, leverage: p.leverage, margin: String(p.margin), size: String(p.size), entry: String(p.entry_price), opened_at: p.opened_at, note: p.note || '' })} style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>editar dados</a></div>
+                        <div style={{ textAlign: 'center', marginTop: 8 }}><a onClick={() => setPerpForm({ id: p.id, market: p.market, symbol: p.symbol, name: p.name, side: p.side, leverage: p.leverage, margin: String(p.margin), size: String(p.size), entry: String(p.entry_price), tp: p.tp ? String(p.tp) : '', sl: p.sl ? String(p.sl) : '', opened_at: p.opened_at, note: p.note || '' })} style={{ fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>editar dados</a></div>
                       </div>
                     )
                   })}
@@ -2216,6 +2228,19 @@ export default function DashboardApp({
               </div>
               <div className="field"><label>Tamanho / Size <span style={{ color: 'var(--muted)' }}>(opcional — se a posição já está aberta)</span></label><input inputMode="decimal" value={perpForm.size || ''} onChange={e => setPerpForm({ ...perpForm, size: e.target.value })} placeholder={`ex: 1.1 ${perpForm.symbol || ''} — copie de Size na Ondo`} /></div>
               {sizeInput > 0 && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Margem correspondente: <b>{usd(margin)}</b> (tamanho tem prioridade sobre a margem digitada)</p>}
+              <div className="grid2" style={{ marginTop: 4 }}>
+                <div className="field"><label>🎯 Alvo / TP U$ <span style={{ color: 'var(--muted)' }}>(opc.)</span></label><input inputMode="decimal" value={perpForm.tp || ''} onChange={e => setPerpForm({ ...perpForm, tp: e.target.value })} placeholder="onde realizar" /></div>
+                <div className="field"><label>🛑 Stop / SL U$ <span style={{ color: 'var(--muted)' }}>(opc.)</span></label><input inputMode="decimal" value={perpForm.sl || ''} onChange={e => setPerpForm({ ...perpForm, sl: e.target.value })} placeholder="onde proteger" /></div>
+              </div>
+              {(() => {
+                const tp = num(perpForm.tp), sl = num(perpForm.sl), isLong = perpForm.side === 'long'
+                const warns: string[] = []
+                if (tp > 0 && entry > 0 && ((isLong && tp <= entry) || (!isLong && tp >= entry))) warns.push(`Alvo deveria ficar ${isLong ? 'acima' : 'abaixo'} da entrada`)
+                if (sl > 0 && entry > 0 && ((isLong && sl >= entry) || (!isLong && sl <= entry))) warns.push(`Stop deveria ficar ${isLong ? 'abaixo' : 'acima'} da entrada`)
+                if (sl > 0 && liq != null && liq > 0.001 && ((isLong && sl <= liq) || (!isLong && sl >= liq))) warns.push('Stop está além da liquidação — o mercado te liquida antes dele agir')
+                return warns.length ? <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4, color: '#F5A623' }}>⚠ {warns.join(' · ')}</p> : null
+              })()}
+              <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 4, fontSize: 10 }}>Estes níveis são só acompanhamento. A ordem que fecha a posição você define na <b>Ondo</b> (coluna TP/SL de lá).</p>
               {mk?.last ? <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 2 }}>Mark agora: <b>{usd(mk.last)}</b> · <a onClick={() => setPerpForm({ ...perpForm, entry: String(mk.last) })} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }}>usar como entrada</a></p> : null}
 
               <div className="modal-preview" style={{ flexDirection: 'column', gap: 6 }}>

@@ -23,6 +23,8 @@ export type PerpPosition = {
   size: number            // quantidade (contratos)
   entry_price: number
   margin: number          // margem inicial alocada (USDC)
+  tp?: number | null      // take-profit (alvo) em USD — acompanhamento
+  sl?: number | null      // stop-loss em USD — acompanhamento
   opened_at: string
   status: 'open' | 'closed'
   close_price?: number | null
