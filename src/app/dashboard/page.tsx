@@ -58,6 +58,7 @@ export default async function DashboardPage() {
       initialLevels={(levels ?? []) as Level[]}
       initialPerps={(perps ?? []) as PerpPosition[]}
       initialPerpAcct={(perpAcct?.collateral ?? 0) as number}
+      initialAutoClose={(perpAcct?.auto_close ?? true) as boolean}
     />
   )
 }

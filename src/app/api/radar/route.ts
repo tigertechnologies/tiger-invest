@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
+import { getMarkets, getMarketsByIds } from '@/lib/market'
 
 export const dynamic = 'force-dynamic'
 
-const CG = 'https://api.coingecko.com/api/v3'
 const STABLE = new Set(['usdt', 'usdc', 'dai', 'busd', 'tusd', 'fdusd', 'usde', 'usds', 'pyusd', 'usdd', 'gusd', 'frax', 'lusd'])
 const MAJORS = new Set(['btc', 'eth', 'wbtc', 'weth', 'steth', 'wsteth', 'wbeth', 'weeth', 'reth'])
 // principais memecoins por id (confiável, sem depender de categoria)
@@ -15,7 +15,6 @@ function mapCoin(c: any) {
     ch7d: c.price_change_percentage_7d_in_currency ?? null, vol: c.total_volume ?? 0, mcap: c.market_cap ?? 0,
   }
 }
-async function markets(qs: string) { const r = await fetch(`${CG}/coins/markets?${qs}`, { next: { revalidate: 180 } }); if (!r.ok) return []; const j = await r.json(); return Array.isArray(j) ? j : [] }
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -23,28 +22,26 @@ export async function GET(req: Request) {
 
   const out: any = { top: [], alts: [], memes: [], net: netKey }
 
+  // FONTE ÚNICA: top-250 compartilhado (mesmo snapshot do Top 50, Carteira, etc.)
+  const all = await getMarkets()
+
   // 1) TOP — maiores por market cap (sem stablecoins)
-  try {
-    const tp = await markets('vs_currency=usd&order=market_cap_desc&per_page=15&page=1&price_change_percentage=24h,7d')
-    out.top = tp.map(mapCoin).filter((c: any) => !STABLE.has(c.symbol.toLowerCase())).slice(0, 10)
-  } catch {}
+  out.top = all.map(mapCoin).filter((c: any) => !STABLE.has(c.symbol.toLowerCase())).slice(0, 10)
   const topIds = new Set(out.top.map((c: any) => c.id))
 
-  // 2) MEMES — lista curada, tirando o que já está no Top (evita duplicar)
+  // 2) MEMES — lista curada (fora do top-250 muitas vezes), tirando o que já está no Top
   try {
-    const m = await markets(`vs_currency=usd&ids=${MEME_IDS.join(',')}&order=market_cap_desc&per_page=20&page=1&price_change_percentage=24h,7d`)
+    const m = await getMarketsByIds(MEME_IDS)
     out.memes = m.map(mapCoin).filter((c: any) => !topIds.has(c.id)).sort((x: any, y: any) => y.mcap - x.mcap).slice(0, 10)
   } catch {}
   const memeIds = new Set(out.memes.map((c: any) => c.id))
 
   // 3) ALTCOINS — próximas por mcap, sem stables/majors e sem o que já apareceu em Top/Memes
-  try {
-    const a = await markets('vs_currency=usd&order=market_cap_desc&per_page=60&page=1&price_change_percentage=24h,7d')
-    out.alts = a.map(mapCoin).filter((c: any) => {
-      const s = c.symbol.toLowerCase()
-      return !STABLE.has(s) && !MAJORS.has(s) && !topIds.has(c.id) && !memeIds.has(c.id)
-    }).slice(0, 10)
-  } catch {}
+  out.alts = all.map(mapCoin).filter((c: any) => {
+    const s = c.symbol.toLowerCase()
+    return !STABLE.has(s) && !MAJORS.has(s) && !topIds.has(c.id) && !memeIds.has(c.id)
+  }).slice(0, 10)
 
   return NextResponse.json(out)
 }
+

@@ -30,6 +30,7 @@ export type PerpPosition = {
   close_price?: number | null
   closed_at?: string | null
   realized_pnl?: number | null
+  close_reason?: string | null
   note?: string
 }
 

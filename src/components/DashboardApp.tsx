@@ -15,7 +15,7 @@ import {
   upnl, notionalAt, liqPrice, liqDistancePct, accountSummary,
 } from '@/lib/perps'
 import { emissionFor, emissionTone, dilutionAdjusted } from '@/lib/inflation'
-import { buildHealth, type Flag, type Severity } from '@/lib/health'
+import { pickTopRisk, type TopRisk } from '@/lib/health'
 
 type Tab = 'inicio' | 'carteira' | 'cotacao' | 'radar' | 'pulso' | 'pools' | 'perps' | 'aportes' | 'metas' | 'lab' | 'tiger100'
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
@@ -44,8 +44,8 @@ function xirr(cfs: { date: string; amount: number }[]): number | null {
 }
 
 export default function DashboardApp({
-  userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels, initialPerps = [], initialPerpAcct = 0,
-}: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[]; initialPerps?: PerpPosition[]; initialPerpAcct?: number }) {
+  userEmail, plan = 'alpha', periodEnd = null, isAdmin = false, initialHoldings, initialFlows, initialTx, initialPools, initialLevels, initialPerps = [], initialPerpAcct = 0, initialAutoClose = true,
+}: { userEmail: string; plan?: string; periodEnd?: string | null; isAdmin?: boolean; initialHoldings: Holding[]; initialFlows: Flow[]; initialTx: Transaction[]; initialPools: Pool[]; initialLevels: Level[]; initialPerps?: PerpPosition[]; initialPerpAcct?: number; initialAutoClose?: boolean }) {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   // --- Gate por plano ---
@@ -158,6 +158,8 @@ export default function DashboardApp({
   // --- Perps (Ondo) ---
   const [perps, setPerps] = useState<PerpPosition[]>(initialPerps)
   const [perpCollateral, setPerpCollateral] = useState<number>(initialPerpAcct)
+  const [autoClose, setAutoClose] = useState<boolean>(initialAutoClose)
+  const autoClosingRef = useRef<Set<string>>(new Set())
   const [perpMkts, setPerpMkts] = useState<Record<string, PerpMarket>>({})
   const [perpMktList, setPerpMktList] = useState<PerpMarket[]>([])
   const [perpForm, setPerpForm] = useState<any | null>(null)
@@ -166,7 +168,6 @@ export default function DashboardApp({
   const [perpPick, setPerpPick] = useState('')
   const [pulse, setPulse] = useState<any | null>(null)
   const [pulseLoading, setPulseLoading] = useState(false)
-  const [healthOpen, setHealthOpen] = useState(false)
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? '')) }, [supabase])
 
@@ -187,7 +188,7 @@ export default function DashboardApp({
     if (p.data) setPools(p.data as Pool[])
     if (l.data) setLevels(l.data as Level[])
     if (pp.data) setPerps(pp.data as PerpPosition[])
-    if (pa.data) setPerpCollateral((pa.data as any).collateral ?? 0)
+    if (pa.data) { setPerpCollateral((pa.data as any).collateral ?? 0); setAutoClose((pa.data as any).auto_close ?? true) }
   }, [supabase, userId])
 
   // seed ÚNICO (gated por flag) — nunca reinjeta
@@ -255,6 +256,27 @@ export default function DashboardApp({
     load(); const t = setInterval(load, tab === 'perps' ? 15000 : 45000)
     return () => { active = false; clearInterval(t) }
   }, [tab, perps])
+
+  // Detecção de auto-fechamento: mark atravessou TP/SL/liquidação → encerra
+  useEffect(() => {
+    if (!autoClose) return
+    const open = perps.filter(p => p.status === 'open')
+    for (const p of open) {
+      const m = perpMkts[p.symbol]; const mark = m?.last
+      if (!mark || mark <= 0 || autoClosingRef.current.has(p.id || '')) continue
+      const isLong = p.side === 'long'
+      // liq da conta (mesma matemática cross usada na tela)
+      const mmr = m?.mmr ?? mmrFor(metaFor(p.symbol).maxLev)
+      const maintI = notionalAt(p.size, mark) * mmr
+      const A = perpSum.equity - upnl(p, mark) - perpSum.maintMargin + maintI
+      const liq = liqPrice({ side: p.side, size: p.size, entry_price: p.entry_price, mmr }, A)
+      let trig: { price: number; reason: 'tp' | 'sl' | 'liq' } | null = null
+      if (p.tp && ((isLong && mark >= p.tp) || (!isLong && mark <= p.tp))) trig = { price: p.tp, reason: 'tp' }
+      else if (p.sl && ((isLong && mark <= p.sl) || (!isLong && mark >= p.sl))) trig = { price: p.sl, reason: 'sl' }
+      else if (liq != null && liq > 0.001 && ((isLong && mark <= liq) || (!isLong && mark >= liq))) trig = { price: liq, reason: 'liq' }
+      if (trig) autoCloseTriggered(p, trig.price, trig.reason)
+    }
+  }, [perpMkts, perps, autoClose]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // sinais técnicos
   useEffect(() => {
@@ -451,23 +473,10 @@ export default function DashboardApp({
   const stockInv = holdings.filter(h => h.kind === 'stock').reduce((a, h) => a + h.invested, 0)
   const stockPl = stockInv ? (stockVal - stockInv) / stockInv * 100 : 0
 
-  // Saúde da carteira — scanner de risco sobre os próprios dados
-  const health = useMemo(() => {
-    // por símbolo: 1ª compra e se há stop
-    const bySym: Record<string, { firstDate: string; hasStop: boolean }> = {}
-    txs.forEach(x => {
-      const s = bySym[x.symbol] || (bySym[x.symbol] = { firstDate: x.buy_date, hasStop: false })
-      if ((x.buy_date || '') < s.firstDate) s.firstDate = x.buy_date
-      if ((x.stop_limit || 0) > 0) s.hasStop = true
-    })
-    const hh = priced.filter(h => h.kind === 'crypto' || h.kind === 'stock').map(h => {
-      const info = bySym[h.symbol]
-      const years = info ? daysSince(info.firstDate) / 365 : 0
-      const v = valOf(h)
-      const nominalPct = h.invested ? (v - h.invested) / h.invested * 100 : 0
-      return { symbol: h.symbol, kind: h.kind, value: v, metaPct: h.meta_pct, years, hasStop: !!info?.hasStop, emission: h.kind === 'crypto' ? emissionFor(h.symbol) : null, nominalPct }
-    })
-    // perps: margin ratio + menor distância até liquidação
+  // ATENÇÃO AGORA — um único risco relevante, ponderado pelo peso no patrimônio
+  const topRisk = useMemo(() => {
+    const riskH = priced.filter(h => h.kind === 'crypto' || h.kind === 'stock')
+    const topA = riskH.slice().sort((a, b) => valOf(b) - valOf(a))[0]
     const openP = perps.filter(p => p.status === 'open')
     let minLiq: number | null = null
     for (const p of openP) {
@@ -480,14 +489,18 @@ export default function DashboardApp({
       const d = liq != null ? liqDistancePct(p.side, mark, liq) : null
       if (d != null && (minLiq == null || d < minLiq)) minLiq = d
     }
-    return buildHealth({
-      patr: t.patr, holdings: hh, cashVal: t.cashVal, poolsVal,
-      perpsOpen: openP.map(p => ({ symbol: p.symbol, side: p.side, margin: p.margin, leverage: p.leverage, hasStop: (p.sl ?? 0) > 0 })),
-      perpEquity: perpsEquity, perpCollateral, perpUpnl: perpSum.totalUpnl,
-      perpMarginRatio: perpSum.marginRatio, perpMinLiqDist: minLiq,
-      cycleRegime: pulse?.regime ?? null,
+    const poolsOut = pools.filter(p => {
+      const pr = live[p.par1_cg_id]?.usd
+      return pr && p.low_range && p.high_range && (pr < p.low_range || pr > p.high_range)
+    }).map(p => ({ par: `${p.par1}/${p.par2}`, weight: t.patr ? p.current_value / t.patr : 0 }))
+    return pickTopRisk({
+      patr: t.patr,
+      topAsset: topA && t.patr ? { symbol: topA.symbol, share: valOf(topA) / t.patr } : null,
+      perpEquity: perpsEquity, perpNotional: perpSum.notional, perpMarginRatio: perpSum.marginRatio,
+      perpMinLiqDist: minLiq, perpsNoStop: openP.filter(p => (p.sl ?? 0) <= 0).length, perpsOpen: openP.length,
+      poolsOut, openPl: t.pl, openPlPct: plpct,
     })
-  }, [priced, txs, t.patr, t.cashVal, poolsVal, perps, perpMkts, perpSum, perpsEquity, perpCollateral, pulse])
+  }, [priced, perps, perpMkts, perpSum, perpsEquity, pools, live, t.patr, t.pl, plpct])
 
   const cats = useMemo(() => {
     const bs = (s: string) => priced.filter(h => h.symbol === s).reduce((a, h) => a + valOf(h), 0)
@@ -801,12 +814,33 @@ export default function DashboardApp({
     const gross = dir * c.size * (px - c.entry_price)
     const fees = (c.size * c.entry_price + c.size * px) * PERP_TAKER_FEE   // taxa de entrada + saída (taker)
     const realized = gross - fees
-    await supabase.from('perps_positions').update({ status: 'closed', close_price: px, closed_at: new Date().toISOString().slice(0, 10), realized_pnl: realized }).eq('id', c.id)
+    await supabase.from('perps_positions').update({ status: 'closed', close_price: px, closed_at: new Date().toISOString().slice(0, 10), realized_pnl: realized, close_reason: 'manual' }).eq('id', c.id)
     setPerpClose(null); await refetch(); flash(`Posição encerrada · ${realized >= 0 ? '+' : '−'}$${fmt(Math.abs(realized))}`, realized >= 0 ? 'ok' : 'info')
+  }
+
+  // Auto-fechamento por preço: quando o mark atravessa TP/SL/liquidação,
+  // deduz que a Ondo disparou e encerra a posição. Sem credencial (só mark público).
+  async function autoCloseTriggered(p: PerpPosition, price: number, reason: 'tp' | 'sl' | 'liq') {
+    if (!p.id || autoClosingRef.current.has(p.id)) return
+    autoClosingRef.current.add(p.id)
+    const dir = p.side === 'long' ? 1 : -1
+    const gross = dir * p.size * (price - p.entry_price)
+    const fees = (p.size * p.entry_price + p.size * price) * PERP_TAKER_FEE
+    const realized = gross - fees
+    await supabase.from('perps_positions').update({ status: 'closed', close_price: price, closed_at: new Date().toISOString().slice(0, 10), realized_pnl: realized, close_reason: reason }).eq('id', p.id)
+    await refetch()
+    const label = reason === 'tp' ? '🎯 Alvo atingido' : reason === 'sl' ? '🛑 Stop atingido' : '⚠ Liquidação'
+    flash(`${p.symbol}: ${label} — encerrada (${realized >= 0 ? '+' : '−'}$${fmt(Math.abs(realized))})`, realized >= 0 ? 'ok' : 'info')
+    autoClosingRef.current.delete(p.id)
+  }
+  async function toggleAutoClose() {
+    const v = !autoClose
+    setAutoClose(v)
+    await supabase.from('perps_account').upsert({ user_id: userId, collateral: perpCollateral, auto_close: v, updated_at: new Date().toISOString() })
   }
   async function savePerpCollateral() {
     const v = num(perpAcctForm || '0')
-    await supabase.from('perps_account').upsert({ user_id: userId, collateral: v, updated_at: new Date().toISOString() })
+    await supabase.from('perps_account').upsert({ user_id: userId, collateral: v, auto_close: autoClose, updated_at: new Date().toISOString() })
     setPerpCollateral(v); setPerpAcctForm(null); await refetch()
   }
 
@@ -1043,40 +1077,39 @@ export default function DashboardApp({
               </div>
             </div>
 
-            {/* SAÚDE DA CARTEIRA */}
+            {/* RESUMO DA CARTEIRA */}
             {(() => {
-              const statusColor = health.status === 'crit' ? 'var(--red)' : health.status === 'warn' ? '#F5A623' : 'var(--green)'
-              const statusLabel = health.status === 'crit' ? 'Requer atenção' : health.status === 'warn' ? 'Pontos de cuidado' : 'Saudável'
-              const crit = health.flags.filter(f => f.sev === 'crit').length
-              const warn = health.flags.filter(f => f.sev === 'warn').length
-              const sevColor = (s: Severity) => s === 'crit' ? 'var(--red)' : s === 'warn' ? '#F5A623' : s === 'info' ? 'var(--purple)' : 'var(--green)'
-              const sevIcon = (s: Severity) => s === 'crit' ? '⛔' : s === 'warn' ? '⚠️' : s === 'info' ? 'ℹ️' : '✓'
-              const shown = healthOpen ? health.flags : health.flags.slice(0, 2)
+              const exposto = t.patr > 0 ? (t.patr - t.cashVal) / t.patr * 100 : 0
+              const caixa = t.patr > 0 ? t.cashVal / t.patr * 100 : 0
+              const rGlobal = resultadoFluxoPct
+              const sevColor = !topRisk ? 'var(--green)' : topRisk.sev === 'crit' ? 'var(--red)' : topRisk.sev === 'warn' ? '#F5A623' : 'var(--purple)'
+              const sevIcon = !topRisk ? '✓' : topRisk.sev === 'crit' ? '⛔' : topRisk.sev === 'warn' ? '⚠️' : 'ℹ️'
               return (
-                <div className="card section-gap health-card" style={{ borderColor: statusColor + '44' }}>
-                  <div className="health-head" onClick={() => setHealthOpen(o => !o)}>
-                    <div className="health-ring" style={{ background: `conic-gradient(${statusColor} ${health.score * 3.6}deg, rgba(255,255,255,.07) 0)` }}>
-                      <span className="num" style={{ color: statusColor }}>{health.score}</span>
+                <div className="card section-gap resumo-card">
+                  <div className="eyebrow" style={{ marginBottom: 12 }}>Resumo da carteira</div>
+                  <div className="resumo-grid">
+                    <div className="resumo-cell">
+                      <span className="rc-k">Resultado global</span>
+                      <b className={`rc-v num ${rGlobal >= 0 ? 'up' : 'down'}`}>{(rGlobal >= 0 ? '+' : '−') + fmt(Math.abs(rGlobal), 2) + '%'}</b>
+                      <span className="rc-s">{rGlobal >= 0 ? 'Lucro acumulado' : 'Prejuízo acumulado'}</span>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="eyebrow" style={{ margin: 0 }}>Saúde da carteira</div>
-                      <b style={{ color: statusColor, fontSize: 16, fontFamily: 'Sora' }}>{statusLabel}</b>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{health.flags.length === 0 ? 'Nenhuma bandeira levantada' : `${crit ? crit + ' crítico · ' : ''}${warn ? warn + ' cuidado · ' : ''}${health.flags.length} no total`}</div>
+                    <div className="resumo-cell">
+                      <span className="rc-k">Posições atuais</span>
+                      <b className={`rc-v num ${t.pl >= 0 ? 'up' : 'down'}`}>{(t.pl >= 0 ? '+' : '−') + fmt(Math.abs(plpct), 2) + '%'}</b>
+                      <span className={`rc-s num ${t.pl >= 0 ? 'up' : 'down'}`}>{(t.pl >= 0 ? '+' : '−') + usd(Math.abs(t.pl)).slice(1)}</span>
                     </div>
-                    <span style={{ color: 'var(--muted)', fontSize: 20, transform: healthOpen ? 'rotate(180deg)' : 'none', transition: '.2s' }}>⌄</span>
+                    <div className="resumo-cell">
+                      <span className="rc-k">Capital exposto</span>
+                      <b className="rc-v num">{fmt(exposto, 1)}%</b>
+                      <span className="rc-s">{fmt(caixa, 1)}% em caixa</span>
+                    </div>
                   </div>
-                  {health.flags.length > 0 && (
-                    <div style={{ marginTop: 12 }}>
-                      {shown.map(f => (
-                        <div className="health-flag" key={f.id} style={{ borderLeftColor: sevColor(f.sev) }}>
-                          <div className="hf-top"><span>{sevIcon(f.sev)} <b>{f.title}</b></span><span className="hf-detail num" style={{ color: sevColor(f.sev) }}>{f.detail}</span></div>
-                          {healthOpen && <div className="hf-mean">{f.meaning}</div>}
-                        </div>
-                      ))}
-                      {!healthOpen && health.flags.length > 2 && <div className="health-more" onClick={() => setHealthOpen(true)}>ver todas as {health.flags.length} bandeiras + o que significam ⌄</div>}
-                    </div>
-                  )}
-                  {healthOpen && <p className="foot-note" style={{ textAlign: 'left', padding: 0, marginTop: 10, fontSize: 10 }}>Espelho de risco dos seus próprios dados — mostra exposição, não prevê o mercado nem recomenda operações. Ausência de bandeira vermelha não é garantia de segurança.</p>}
+                  <div className="resumo-alert" style={{ borderColor: sevColor + '55', background: sevColor + '12' }}>
+                    <div className="ra-head">{sevIcon} <span>Atenção agora</span></div>
+                    {topRisk
+                      ? <div className="ra-body"><b style={{ color: sevColor }}>{topRisk.title}</b><span> — {topRisk.detail}</span></div>
+                      : <div className="ra-body" style={{ color: 'var(--muted)' }}>Nenhum risco crítico identificado agora.</div>}
+                  </div>
                 </div>
               )
             })()}
@@ -1368,6 +1401,10 @@ export default function DashboardApp({
                     <span className="k">Colateral depositado (USDC)</span>
                     <span className="v"><a onClick={() => setPerpAcctForm(String(perpCollateral || ''))} style={{ color: 'var(--purple)', cursor: 'pointer', fontWeight: 700 }} className="num">{usd(perpCollateral)} ✎</a></span>
                   </div>
+                  <div className="kv">
+                    <span className="k">Fechar auto no TP/SL/Liquidação</span>
+                    <span className="v"><button onClick={toggleAutoClose} className={`mini-toggle ${autoClose ? 'on' : ''}`}>{autoClose ? 'ON' : 'OFF'}</button></span>
+                  </div>
                   {mrTone === 'down' && openPos.length > 0 && <div className="rangestatus rs-out" style={{ marginTop: 10 }}>⚠ RISCO DE LIQUIDAÇÃO — margin ratio elevado</div>}
                   {mrTone === 'warn' && openPos.length > 0 && <div className="rangestatus rs-warn" style={{ marginTop: 10 }}>⚠ ATENÇÃO — margem apertada, considere reduzir alavancagem</div>}
                 </div>
@@ -1446,7 +1483,7 @@ export default function DashboardApp({
                     <div className="eyebrow" style={{ marginBottom: 8 }}>Encerradas</div>
                     {closedPos.map(p => (
                       <div className="kv" key={p.id}>
-                        <span className="k" style={{ fontSize: 12.5 }}>{p.symbol} <span className={`side-pill sm ${p.side}`}>{p.side === 'long' ? 'L' : 'S'} {p.leverage}x</span> <span style={{ color: 'var(--faint)' }}>{dBR(p.closed_at || '')}</span></span>
+                        <span className="k" style={{ fontSize: 12.5 }}>{p.symbol} <span className={`side-pill sm ${p.side}`}>{p.side === 'long' ? 'L' : 'S'} {p.leverage}x</span> {p.close_reason ? <span className="reason-tag">{p.close_reason === 'tp' ? '🎯 alvo' : p.close_reason === 'sl' ? '🛑 stop' : p.close_reason === 'liq' ? '⚠ liq' : 'manual'}</span> : null} <span style={{ color: 'var(--faint)' }}>{dBR(p.closed_at || '')}</span></span>
                         <span className={`v num ${(p.realized_pnl || 0) >= 0 ? 'up' : 'down'}`}>{((p.realized_pnl || 0) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(p.realized_pnl || 0))} <a onClick={() => delPerp(p.id!)} style={{ color: 'var(--faint)', cursor: 'pointer', marginLeft: 6 }}>✕</a></span>
                       </div>
                     ))}
@@ -1456,7 +1493,7 @@ export default function DashboardApp({
                   </div>
                 )}
 
-                <p className="foot-note"><b style={{ color: 'var(--pink-bright)' }}>Perps</b> = futuros perpétuos alavancados na Ondo (ações, índices e commodities tokenizados, USD-settled, cross margin). A execução é feita na Ondo; o Tiger acompanha mark, uPnL, funding e liquidação ao vivo. Alavancagem multiplica ganho <b>e</b> perda e pode zerar a posição na liquidação. Não é recomendação — opere por sua conta e risco.</p>
+                <p className="foot-note"><b style={{ color: 'var(--pink-bright)' }}>Perps</b> = futuros perpétuos alavancados na Ondo (ações, índices e commodities tokenizados, USD-settled, cross margin). A execução é feita na Ondo; o Tiger acompanha mark, uPnL, funding e liquidação ao vivo. Com o <b>auto-fechar</b> ligado, quando o mark atravessa teu TP/SL ou a liquidação, o Tiger deduz o fechamento e encerra a posição sozinho (sem ler tua conta — é inferência por preço; mantenha os níveis iguais aos da Ondo). Alavancagem multiplica ganho <b>e</b> perda. Não é recomendação — opere por sua conta e risco.</p>
               </>)
             })()}
           </section>

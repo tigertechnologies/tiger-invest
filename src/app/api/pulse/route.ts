@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getMarkets } from '@/lib/market'
 
 export const dynamic = 'force-dynamic'
 const CG = 'https://api.coingecko.com/api/v3'
@@ -34,11 +35,10 @@ export async function GET() {
     }
   } catch {}
 
-  // 3) Markets top — majors, breadth, top gainers
+  // 3) Markets top — majors, breadth, top gainers (FONTE ÚNICA compartilhada)
   let top: any[] = []
   try {
-    const r = await fetch(`${CG}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&price_change_percentage=24h,7d`, { next: { revalidate: 180 } })
-    if (r.ok) { const j = await r.json(); if (Array.isArray(j)) top = j }
+    top = await getMarkets()
   } catch {}
   if (top.length) {
     const nonStable = top.filter(c => !STABLE.has((c.symbol || '').toLowerCase()))
