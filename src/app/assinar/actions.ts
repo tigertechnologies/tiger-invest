@@ -1,8 +1,8 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { criarPagamentoPix } from '@/lib/mercadopago'
-import { PLANS } from '@/lib/plans'
+import { createClient } from '@/lib/invest/sb-server'
+import { criarPagamentoPix } from '@/lib/invest/mercadopago'
+import { PLANS } from '@/lib/invest/plans'
 
 /** Preço em centavos calculado no SERVIDOR (banco → fallback defaults). Nunca confia no cliente. */
 async function amountCents(planId: string, cycle: string): Promise<{ cents: number; name: string } | null> {

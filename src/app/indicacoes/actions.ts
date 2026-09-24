@@ -1,8 +1,8 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { PLANS } from '@/lib/plans'
+import { createClient } from '@/lib/invest/sb-server'
+import { createAdminClient } from '@/lib/invest/sb-admin'
+import { PLANS } from '@/lib/invest/plans'
 
 export type ReferralSummary = {
   code: string; balanceCents: number; earnedCents: number; usedCents: number

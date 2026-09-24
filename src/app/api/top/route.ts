@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getMarkets } from '@/lib/market'
+import { getMarkets } from '@/lib/invest/market'
 
 export const dynamic = 'force-dynamic'
 

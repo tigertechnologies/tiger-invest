@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { PERP_META, metaFor, mmrFor, type PerpMarket } from '@/lib/perps'
+import { PERP_META, metaFor, mmrFor, type PerpMarket } from '@/lib/invest/perps'
 
 // Ondo Perps — mercados e preços AO VIVO (endpoint público, sem credencial).
 // GET https://api.ondoperps.xyz/v1/perps/contracts

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { tiger100History } from '@/lib/tiger100'
+import { createAdminClient } from '@/lib/invest/sb-admin'
+import { tiger100History } from '@/lib/invest/tiger100'
 
 export const dynamic = 'force-dynamic'
 

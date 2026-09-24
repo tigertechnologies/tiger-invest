@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getMarkets, getMarketsByIds } from '@/lib/market'
+import { getMarkets, getMarketsByIds } from '@/lib/invest/market'
 
 // Preço + variação (24h/30d/1y) para a carteira, e câmbio em BRL.
 // Usa a FONTE ÚNICA (getMarkets): para coins no top-250 o preço é EXATAMENTE

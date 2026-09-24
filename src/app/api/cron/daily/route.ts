@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/invest/sb-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -112,7 +112,7 @@ export async function GET(req: Request) {
 
   // ---------- 3) ÍNDICE TIGER 100 (nível diário, base 1000 compondo o retorno) ----------
   try {
-    const { computeTiger100 } = await import('@/lib/tiger100')
+    const { computeTiger100 } = await import('@/lib/invest/tiger100')
     const idx = await computeTiger100()
     if (idx) {
       const { data: last } = await admin.from('tiger100_snapshot').select('snap_date,level').order('snap_date', { ascending: false }).limit(1)

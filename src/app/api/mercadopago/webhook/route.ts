@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { consultarPagamento, contaLabel } from '@/lib/mercadopago'
+import { createAdminClient } from '@/lib/invest/sb-admin'
+import { consultarPagamento, contaLabel } from '@/lib/invest/mercadopago'
 
 /**
  * TIGER INVEST — webhook do Mercado Pago.

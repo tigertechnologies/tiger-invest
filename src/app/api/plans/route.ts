@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { PLANS, rowToPlan } from '@/lib/plans'
+import { createClient } from '@/lib/invest/sb-server'
+import { PLANS, rowToPlan } from '@/lib/invest/plans'
 
 export const dynamic = 'force-dynamic'
 
