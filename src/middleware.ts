@@ -1,50 +1,41 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-type CookieToSet = { name: string; value: string; options?: Record<string, unknown> }
+type CookieList = { name: string; value: string; options: CookieOptions }[];
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request })
+const PUBLIC = ['/login', '/join', '/auth', '/privacy', '/terms', '/termos', '/about', '/api', '/planos', '/assinar', '/redefinir'];
+// áreas pessoais: sempre exigem login
+const PRIVATE = ['/admin', '/invest', '/indicacoes'];
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: CookieToSet[]) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          response = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          )
-        },
+export async function middleware(req: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  let res = NextResponse.next({ request: req });
+  if (!url || !key) return res;
+
+  const sb = createServerClient(url, key, {
+    cookies: {
+      getAll: () => req.cookies.getAll(),
+      setAll: (list: CookieList) => {
+        list.forEach(({ name, value }) => req.cookies.set(name, value));
+        res = NextResponse.next({ request: req });
+        list.forEach(({ name, value, options }) => res.cookies.set(name, value, options));
       },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-  const path = request.nextUrl.pathname
-
-  if (!user && (path.startsWith('/dashboard') || path.startsWith('/admin') || path.startsWith('/indicacoes'))) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    },
+  });
+  const { data } = await sb.auth.getUser();
+  const path = req.nextUrl.pathname;
+  const requireLogin = process.env.NEXT_PUBLIC_REQUIRE_LOGIN === 'true';
+  const needsAuth = PRIVATE.some((p) => path.startsWith(p)) || (requireLogin && !PUBLIC.some((p) => path.startsWith(p)));
+  if (needsAuth && !data.user) {
+    const to = req.nextUrl.clone();
+    to.pathname = '/login';
+    to.searchParams.set('next', path);
+    return NextResponse.redirect(to);
   }
-  // Trava de admin já no edge: quem não está em ADMIN_EMAILS nunca chega ao /admin,
-  // mesmo que o gating da página falhe. (2ª camada além de admin/page.tsx.)
-  if (user && path.startsWith('/admin')) {
-    const admins = (process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-    if (!admins.includes((user.email || '').toLowerCase())) {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-  }
-  if (user && path === '/login') {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-  return response
+  return res;
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
-}
+  matcher: ['/((?!api|_next/static|_next/image|icon.svg|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|webp|gif)$).*)'],
+};
