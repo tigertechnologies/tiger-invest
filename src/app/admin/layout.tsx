@@ -1,7 +1,9 @@
 import Link from 'next/link';
-import { Droplets, FileText, GraduationCap, LayoutDashboard, MessageCircle, Settings, UserPlus, Users } from 'lucide-react';
+import { CreditCard, Droplets, FileText, GraduationCap, LayoutDashboard, MessageCircle, Settings, UserPlus, Users } from 'lucide-react';
 import { getSessionUser } from '@/lib/supabase/server';
 import { hasSupabase } from '@/lib/supabase/env';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { isAdminUser } from '@/lib/admin-check';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,11 +16,21 @@ const LINKS = [
   { href: '/admin/chat', label: 'Chat de suporte', icon: MessageCircle },
   { href: '/admin/leads', label: 'Leads', icon: UserPlus },
   { href: '/admin/users', label: 'Usuários', icon: Users },
+  { href: '/admin/assinaturas', label: 'Assinaturas e planos', icon: CreditCard },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   if (!hasSupabase()) return <div className="card p-8 text-center">Configure o Supabase (veja o README) para usar o painel admin.</div>;
-  const { user, profile } = await getSessionUser();
+  const { user, profile: p0 } = await getSessionUser();
+  let profile = p0;
+  // e-mail em ADMIN_EMAILS vira admin também no banco (o RLS do painel usa profiles.role)
+  if (user && profile?.role !== 'admin' && (await isAdminUser(user))) {
+    const adm = supabaseAdmin();
+    if (adm) {
+      await adm.from('profiles').upsert({ id: user.id, email: user.email, role: 'admin', is_subscriber: true }, { onConflict: 'id' });
+      profile = { ...(profile ?? {}), role: 'admin' } as typeof profile;
+    }
+  }
   if (!user) return <div className="card p-8 text-center">Faça <Link href="/login?next=/admin" className="text-neon underline">login</Link> para acessar o painel.</div>;
   if (profile?.role !== 'admin')
     return (

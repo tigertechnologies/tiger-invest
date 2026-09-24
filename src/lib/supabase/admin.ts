@@ -11,3 +11,10 @@ export function supabaseAdmin(): SupabaseClient | null {
   if (!admin) admin = createClient(SUPABASE_URL, key, { auth: { persistSession: false } });
   return admin;
 }
+
+/** Compatibilidade: arquivos antigos do Tiger Invest importam `createAdminClient` daqui. */
+export function createAdminClient(): SupabaseClient {
+  const c = supabaseAdmin();
+  if (!c) throw new Error('Supabase admin: faltam NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
+  return c;
+}

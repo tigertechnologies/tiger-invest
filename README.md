@@ -66,6 +66,15 @@ O plano gratuito da Vercel roda o agendamento só 1x por dia. Os scanners també
 
 ---
 
+## Subir por cima do Tiger Invest (mesmo Supabase, GitHub e Vercel)
+1. **Backup**: Supabase → Database → Backups (ou exporte as tabelas em CSV).
+2. **Supabase**: rode o `supabase/schema.sql` no SQL Editor. Ele só cria o que falta; carteiras, assinaturas, indicações e usuários continuam.
+   Em **Authentication → URL Configuration → Redirect URLs** adicione `https://SEU-DOMINIO/auth/callback`.
+3. **GitHub**: numa branch nova (`tiger-labs`), apague o código antigo e coloque o deste projeto. Faça push.
+4. **Vercel**: a branch gera um link de Preview. Em Settings → Environment Variables, deixe as variáveis valendo também para **Preview** e adicione `NEXT_PUBLIC_SITE_URL` e `CRON_SECRET` se ainda não existirem. Teste o Preview.
+5. Tudo certo? Faça merge da branch na `main`. O domínio atual passa a abrir o Tiger Labs; `/dashboard` redireciona para `/invest` (o app instalado no celular continua funcionando).
+6. Em `/admin/assinaturas`, revise o texto dos planos (os planos antigos são mantidos como estavam).
+
 ## Rodar localmente
 ```bash
 cp .env.example .env.local   # preencha as chaves

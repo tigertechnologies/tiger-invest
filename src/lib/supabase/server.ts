@@ -29,3 +29,10 @@ export async function getSessionUser() {
   const { data: profile } = await sb.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
   return { user: data.user, profile };
 }
+
+/** Compatibilidade: arquivos antigos do Tiger Invest importam `createClient` daqui. */
+export function createClient() {
+  const c = supabaseServer();
+  if (!c) throw new Error('Supabase não configurado (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).');
+  return c;
+}
