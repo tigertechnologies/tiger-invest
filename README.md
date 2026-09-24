@@ -1,66 +1,116 @@
-# 🐯 Tiger Invest
+# Tiger Labs
 
-Controle profissional de ativos (cripto, ações, caixa e pools de liquidez).
-Stack: **Next.js 14 (App Router) · TypeScript · Supabase (Auth + Postgres + RLS) · Vercel**.
-Cotação de cripto **ao vivo** via CoinGecko. Visual pink/black neon.
+Plataforma de análise de criptoativos: análise técnica, scanners, position trading, pools e DeFi — agora com o **Tiger Invest integrado**: Minha Carteira, Pulso do Mercado, Radar, BTC Lab, Índice Tiger 100, Ideias de Pools, Perps (Ondo), planos pagos por PIX (Mercado Pago) e programa de indicação.
+Stack: **Next.js 14 (App Router) + TypeScript + Tailwind**, **Supabase** (login, banco, chat em tempo real) e **Vercel** (hospedagem + agendamento). Um só login, um só banco, um só site.
 
 ---
 
-## 1. Supabase (banco + login)
+## Passo a passo para colocar no ar (cerca de 20 minutos)
 
-1. No projeto Supabase, abra **SQL Editor** e rode o conteúdo de `supabase/schema.sql`.
-   Cria as tabelas `holdings` e `flows` com **RLS** (cada usuário só vê os próprios dados).
-2. **Authentication → Providers → Email**: deixe habilitado.
-   Para testar rápido, em **Authentication → Sign In / Providers**, desative "Confirm email"
-   (assim o cadastro já entra sem confirmar o e-mail).
-3. Em **Project Settings → API**, copie:
-   - `Project URL`  → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon public`  → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+### 1. Supabase (banco de dados e login)
+1. Crie uma conta em https://supabase.com, clique em **New project** e escolha a região **South America (São Paulo)**.
+2. Abra **SQL Editor > New query**, cole todo o conteúdo de `supabase/schema.sql` e clique em **Run**.
+3. Em **Project Settings > API**, copie:
+   - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
+   - `anon public` → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `service_role` (secreta) → `SUPABASE_SERVICE_ROLE_KEY`
+4. Em **Authentication > URL Configuration**, preencha **Site URL** com o seu domínio (ex.: `https://tigerlabs.com.br`) e adicione em **Redirect URLs**: `https://SEU-DOMINIO/auth/callback`.
 
-## 2. GitHub
+### 2. GitHub
+1. Crie um repositório vazio (ex.: `tiger-labs`), **privado**.
+2. Na pasta do projeto:
+   ```bash
+   git init
+   git add .
+   git commit -m "Tiger Labs"
+   git branch -M main
+   git remote add origin https://github.com/SEU-USUARIO/tiger-labs.git
+   git push -u origin main
+   ```
+   Sem terminal? Use **Add file > Upload files** no GitHub e arraste todo o conteúdo da pasta (menos `node_modules` e `.next`).
 
-```bash
-git init
-git add .
-git commit -m "Tiger Invest — MVP"
-git branch -M main
-git remote add origin https://github.com/tigertechnologies/tiger-invest.git
-git push -u origin main
-```
+### 3. Vercel
+1. Em https://vercel.com clique em **Add New > Project** e importe o repositório.
+2. Em **Environment Variables**, cadastre as variáveis de `.env.example`:
+   - obrigatórias: as 3 do Supabase, `NEXT_PUBLIC_SITE_URL`, `CRON_SECRET`, `ADMIN_EMAILS`;
+   - planos/PIX: `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`, `MP_ACCOUNT_LABEL` e `ENFORCE_PLANS`;
+   - opcionais: `NEXT_PUBLIC_REQUIRE_LOGIN`, `FINNHUB_API_KEY` (ações na carteira), `COINGECKO_API_KEY`, `RPC_*`.
+3. Clique em **Deploy**. O `vercel.json` já coloca as funções em São Paulo (`gru1`) e cria 3 agendamentos diários: scanners de mercado, position trading e o `/api/cron/daily` (foto diária da carteira e das pools, índice Tiger 100 e alertas das pools vigiadas).
+4. Para usar seu domínio: **Settings > Domains**.
 
-## 3. Vercel
+### 4. Virar administrador
+1. Acesse o site, clique no ícone da conta e crie seu cadastro.
+2. No Supabase (SQL Editor), rode trocando o e-mail:
+   ```sql
+   update public.profiles set role = 'admin', is_subscriber = true where email = 'seu@email.com';
+   ```
+3. Coloque o mesmo e-mail em `ADMIN_EMAILS` na Vercel.
+4. Entre em `/admin` para cadastrar pools, relatórios, tutoriais, dados da empresa, redes sociais e responder o chat, e em `/admin/assinaturas` para planos e assinantes.
 
-1. **Add New → Project** → importe o repo `tiger-invest`.
-2. Framework: Next.js (detectado sozinho).
-3. **Environment Variables** — adicione as duas:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. **Deploy**. Pronto — cada `git push` re-deploya.
+> **Já usava o Tiger Invest em outro projeto Supabase?** O `schema.sql` cria todas as tabelas dele aqui (carteira, pools, perps, planos, indicações). Para migrar os dados, exporte cada tabela do projeto antigo em CSV (Table Editor → Export) e importe no novo. Os usuários precisam existir no novo projeto (mesmo `id`), então o caminho mais simples é usar o projeto Supabase do Tiger Invest como banco do Tiger Labs: rode o `schema.sql` nele (é idempotente e não apaga nada).
+
+### 5. Planos e PIX (Mercado Pago)
+1. Em https://www.mercadopago.com.br/developers/panel/app crie uma aplicação e copie o **Access Token de produção** → `MP_ACCESS_TOKEN`.
+2. Em **Webhooks**, cadastre a URL `https://SEU-DOMINIO/api/mercadopago/webhook`, marque o evento **Pagamentos** e copie a **assinatura secreta** → `MP_WEBHOOK_SECRET`.
+3. Enquanto testa, deixe `ENFORCE_PLANS=false` (tudo liberado para quem tem login). Quando quiser cobrar, troque para `true` e faça um novo deploy.
+4. Os planos (START, PRO, ALPHA), preços, benefícios e a taxa do Mercado Pago usada nas comissões são editados em **/admin/assinaturas**. Lá você também vê pedidos, ativa plano manualmente e ajusta créditos.
+5. O que cada plano libera: START = Minha Carteira, Tiger 100, Ideias de Pools e conteúdo exclusivo do Labs; PRO = + Pulso, Radar, BTC Lab e Perps; ALPHA = + fluxo de caixa completo e pools avançadas. Admin e quem estiver com `is_subscriber = true` no perfil têm tudo.
+
+### 6. Indicações
+Cada usuário tem um código em **/indicacoes**. O link `https://SEU-DOMINIO/assinar?ref=CODIGO` (ou `/login?ref=CODIGO`) registra quem indicou já no cadastro. A cada pagamento do indicado, o padrinho ganha de 3% a 10% do valor líquido em créditos (conforme quantos indicados ativos tem), que podem pagar a própria assinatura.
+
+### 7. (Opcional) Scanners a cada 15 minutos
+O plano gratuito da Vercel roda o agendamento só 1x por dia. Os scanners também se atualizam sozinhos quando alguém abre a página e o cache venceu (15 min). Para manter sempre pronto:
+1. Supabase > **Database > Extensions**: ative `pg_cron` e `pg_net`.
+2. Edite `supabase/cron.sql` (domínio e `CRON_SECRET`) e rode no SQL Editor.
+
+---
 
 ## Rodar localmente
-
 ```bash
-cp .env.example .env.local   # preencha as 2 variáveis
+cp .env.example .env.local   # preencha as chaves
 npm install
 npm run dev                  # http://localhost:3000
+npm run test:engine          # testes do motor de indicadores
 ```
 
----
+## Páginas
+| Rota | O que faz |
+|---|---|
+| `/` | Análise técnica por token e período (15m a 1M), score, trade sugerido, 15+ indicadores, força do sinal e faixas de pool |
+| `/reversals` · `/rsi` · `/support-resistance` | Scanners de 130+ tokens no 4h |
+| `/position-trading` · `/history` · `/opportunities` | Score de ciclo 0-100, histórico diário de 4 anos (CSV) e ranking |
+| `/pools` | Pools sugeridas com status da faixa ao vivo |
+| `/weekly-reports` | Relatórios em Markdown |
+| `/defi/dashboard` | Estratégia 1% (editável no admin) |
+| `/defi/stablecoin-pools` · `/defi/token-pools` | Explorador de pools (DeFiLlama) |
+| `/defi/wallet-tracker` · `/defi/pools-tracker` | Saldos, Aave e Uniswap V3 on-chain em 6 redes |
+| `/tutorials` · `/indicators` | Vídeos com progresso e guia completo dos indicadores |
+| `/join` | Captura de leads ("Quero entrar no Labs agora") |
+| `/invest` | **Minha Carteira**: cripto, ações, caixa, pools, perps (Ondo), aportes, metas, alertas e níveis (app completo do Tiger Invest; instalável no celular) |
+| `/mercado/pulso` | Termômetro de ciclo, Fear & Greed, dominância, hype, narrativas, TVL por rede e stablecoins |
+| `/mercado/radar` | Top 10, altcoins e memes com leitura estrutural (tendência, suportes, resistências, gatilhos) |
+| `/mercado/btc-lab` | Múltiplo de Mayer, halving, taxas, mempool, hashrate e dificuldade |
+| `/mercado/tiger-100` | Índice das 100 maiores + comparador (cripto x NASDAQ x S&P 500 x ouro) |
+| `/defi/ideias-de-pools` | Pools V3 ranqueadas pela Nota de Yield, watchlist com alertas e calculadora de IL |
+| `/planos` · `/assinar` | Planos e checkout PIX (Mercado Pago) |
+| `/indicacoes` | Link de indicação, comissões e créditos |
+| `/termos` · `/redefinir` | Termos (LGPD) e redefinição de senha |
+| `/admin` | Painel administrativo (conteúdo do Labs) |
+| `/admin/assinaturas` | Assinantes, pedidos, planos, créditos e taxa do Mercado Pago |
 
-## Como funciona
+## Fontes de dados (sem custo)
+- **Binance** (`data-api.binance.vision`): candles e preços.
+- **CoinGecko**: market cap e ranking (chave Demo opcional em `COINGECKO_API_KEY`).
+- **DeFiLlama**: TVL e APY das pools.
+- **RPCs públicos (publicnode)**: carteiras, Aave e Uniswap V3. Para mais velocidade, use RPCs próprios (`RPC_*`).
+- **mempool.space**, **alternative.me** (Fear & Greed), **DeFiLlama Yields/Stablecoins**, **GeckoTerminal**, **stooq** (índices e ouro), **Ondo Perps** e **Finnhub** (ações, chave grátis).
 
-- **Primeiro login** → o app popula automaticamente a carteira com os dados da BLADE
-  (ETH, BTC, SOL, altcoins, SPY, caixa, pool). Depois é tudo editável.
-- **Cotação ao vivo**: cripto atualiza sozinha a cada 60s (CoinGecko, campo `cg_id`).
-  Ações/caixa/pool você atualiza manual (toque no ativo).
-- **RLS**: cada conta enxerga só a própria carteira.
-- Telas: **Início** (patrimônio + alocação), **Carteira** (editar/add/excluir),
-  **Pools**, **Aportes** (registrar movimentos), **Metas** (meta vs. real).
+## Personalização
+- Cores: `src/app/globals.css` (variáveis `--neon`, `--lime`, etc.).
+- Logo: `src/components/logo.tsx` e `src/app/icon.svg`.
+- Tokens dos scanners: `SCAN_TOKENS` em `src/lib/site.ts`.
+- Pesos e regras de pontuação: `src/lib/market/analysis.ts` e `src/lib/market/position.ts`.
+- Idiomas do menu: `src/lib/i18n.ts`.
 
-## Próximos passos sugeridos
-- Cotação de ações (ex.: Alpha Vantage / Finnhub) para o SPY.
-- Persistir preço ao vivo no banco (histórico).
-- Detalhes da pool (taxas/APR/range) no banco em vez de constante.
-- PWA (instalar como app no celular) + push de alertas de meta.
-
-> Ferramenta de controle pessoal — não é recomendação de investimento.
+> Conteúdo educacional. Não é recomendação de investimento.

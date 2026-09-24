@@ -1,5 +1,5 @@
 // Bump a versão a cada deploy que precise furar cache antigo.
-const CACHE = 'tiger-invest-v2'
+const CACHE = 'tiger-labs-v1'
 
 self.addEventListener('install', () => self.skipWaiting())
 
