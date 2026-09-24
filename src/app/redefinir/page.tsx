@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/invest/sb-client'
+import { LogoMark } from '@/components/logo'
 
 export default function Redefinir() {
   const router = useRouter()
@@ -29,15 +30,15 @@ export default function Redefinir() {
     setLoading(false)
     if (error) { setMsg(error.message.includes('session') ? 'Link inválido ou expirado. Peça um novo em "Esqueci minha senha".' : error.message); return }
     setOk(true); setMsg('Senha redefinida com sucesso! Redirecionando…')
-    setTimeout(() => router.push('/dashboard'), 1400)
+    setTimeout(() => router.push('/invest'), 1400)
   }
 
   return (
-    <main className="auth-wrap">
+    <main className="ti"><div className="auth-wrap">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="mark" aria-hidden><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.3L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.7L12 2z" /></svg></div>
-          <div><b>Tiger Invest</b><span>Controle de Ativos</span></div>
+          <LogoMark size={40} />
+          <div><b>Tiger Labs</b><span>Redefinir senha</span></div>
         </div>
         <h1 className="auth-title">Criar nova senha</h1>
         {!ok && (
@@ -46,11 +47,11 @@ export default function Redefinir() {
             <input type="password" value={pass} onChange={e => setPass(e.target.value)} required placeholder="mínimo 6 caracteres" minLength={6} />
             <label>Confirmar nova senha</label>
             <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required placeholder="repita a senha" minLength={6} />
-            <button className="btn" disabled={loading || !ready}>{loading ? '...' : ready ? 'Salvar nova senha' : 'Validando link…'}</button>
+            <button className="t-btn" disabled={loading || !ready}>{loading ? '...' : ready ? 'Salvar nova senha' : 'Validando link…'}</button>
           </form>
         )}
         {msg && <p className="auth-msg">{msg}</p>}
       </div>
-    </main>
+    </div></main>
   )
 }
