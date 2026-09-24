@@ -1,4 +1,4 @@
-import { cx } from './ui';
+import { cx } from '@/lib/cx';
 
 /** Barra de faixa: mostra onde o preço está em relação ao mínimo/máximo. */
 export function RangeBar({ position, status }: { position: number | null; status: 'dentro' | 'acima' | 'abaixo' | null }) {

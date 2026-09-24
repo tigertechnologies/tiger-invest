@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowDownUp, ArrowDown, ArrowUp, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 
-export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
+import { cx } from '@/lib/cx';
+export { cx };
 
 /* ---------- Breadcrumb ---------- */
 export function Breadcrumb({ items }: { items: { href?: string; label: string }[] }) {
