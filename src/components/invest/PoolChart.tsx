@@ -103,6 +103,11 @@ export default function PoolChart({ par1, par2, cgId, poolId, price, low, high, 
         </div>
       )}
       <div className="pcr-axis"><span>{fmtP(low)}</span><span className={inRange ? 'in' : 'out'}>{price > 0 ? fmtP(price) : '—'}</span><span>{fmtP(high)}</span></div>
+      {quoteUsd !== 1 && price > 0 && (
+        <div className="pcr-axis" style={{ justifyContent: 'center', opacity: .7, marginTop: 2 }}>
+          <span>1 {par1} = {fmtP(price)} {par2} ≈ {usd(price * quoteUsd)}</span>
+        </div>
+      )}
 
       {/* Ativos na posição */}
       <div className="pcr-sec" style={{ marginTop: 14 }}>Ativos na posição</div>
