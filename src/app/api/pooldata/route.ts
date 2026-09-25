@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server'
 // GeckoTerminal: estatísticas ao vivo da pool (TVL, volume 24h, taxas aprox.)
 export async function GET(request: Request) {
   const u = new URL(request.url)
-  const network = u.searchParams.get('network') || 'base'
+  const raw = (u.searchParams.get('network') || 'base').trim().toLowerCase()
+  const network = ({ bnb: 'bsc', 'bnb chain': 'bsc', bnbchain: 'bsc', binance: 'bsc' } as Record<string, string>)[raw] || raw
   const address = u.searchParams.get('address')
   if (!address) return NextResponse.json({})
   try {

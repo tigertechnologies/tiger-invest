@@ -145,6 +145,18 @@ export default function DashboardApp({
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' | 'info' } | null>(null)
   const flash = (msg: string, type: 'ok' | 'err' | 'info' = 'info') => { setToast({ msg, type }); window.setTimeout(() => setToast(null), 3800) }
   const [poolRatio, setPoolRatio] = useState<Record<string, number>>({})
+  // dados on-chain por pool: status real de faixa (ticks), preço USD do token de cotação e quantidades atuais
+  const [poolChain, setPoolChain] = useState<Record<string, { inRange: boolean; quoteUsd: number; base: number | null; quote: number | null }>>({})
+  // monta o objeto acima a partir da resposta de /api/lp-position e do ratio escolhido
+  const chainInfo = (d: any, chosen: number) => {
+    const t1PerT0 = chosen === d.ratio_t1_per_t0
+    return {
+      inRange: !!d.in_range,
+      quoteUsd: (t1PerT0 ? d.price1_usd : d.price0_usd) || 1,
+      base: t1PerT0 ? d.amount0 : d.amount1,
+      quote: t1PerT0 ? d.amount1 : d.amount0,
+    }
+  }
   const [poolData, setPoolData] = useState<Record<string, any>>({})
   // "Onde abrir pool": melhores pares por Vol/TVL e risco de IL (dados ao vivo)
   const [ideas, setIdeas] = useState<any[] | null>(null)
@@ -432,14 +444,15 @@ export default function DashboardApp({
     }
     // pools fora / perto de sair do range
     for (const p of pools) {
-      const price = live[p.par1_cg_id]?.usd ?? 0
+      const ch = p.id ? poolChain[p.id] : undefined
+      const price = (p.id && poolRatio[p.id]) ? poolRatio[p.id] : (live[p.par1_cg_id]?.usd ?? 0)
       if (!price || !p.low_range || !p.high_range) continue
       const span = p.high_range - p.low_range
-      if (price < p.low_range || price > p.high_range) out.push({ id: 'plo' + p.id, tone: 'warn', icon: '⚠', title: `Pool ${p.par1}/${p.par2} FORA do range`, text: `${p.par1} em ${fmt(price)} · deixou de gerar taxas` })
+      if (ch ? !ch.inRange : (price < p.low_range || price > p.high_range)) out.push({ id: 'plo' + p.id, tone: 'warn', icon: '⚠', title: `Pool ${p.par1}/${p.par2} FORA do range`, text: `${p.par1} em ${fmt(price)} · deixou de gerar taxas` })
       else if (span > 0) { const pos = (price - p.low_range) / span * 100; if (pos < 10 || pos > 90) out.push({ id: 'pln' + p.id, tone: 'warn', icon: '⚠', title: `Pool ${p.par1}/${p.par2} perto de sair`, text: `${p.par1} em ${fmt(price)} · chegando na borda da faixa` }) }
     }
     return out
-  }, [priced, levels, txs, pools, live])
+  }, [priced, levels, txs, pools, live, poolRatio, poolChain])
   const poolsVal = useMemo(() => pools.reduce((s, p) => s + p.current_value, 0), [pools])
   const poolsInv = useMemo(() => pools.reduce((s, p) => s + p.aporte, 0), [pools])
 
@@ -994,7 +1007,7 @@ export default function DashboardApp({
         const inside = cands.find(r => r >= lo * 0.5 && r <= hi * 1.5)
         if (inside) chosen = inside
       }
-      if (chosen && p.id) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
+      if (chosen && p.id) { setPoolRatio(prev => ({ ...prev, [p.id!]: chosen })); setPoolChain(prev => ({ ...prev, [p.id!]: chainInfo(d, chosen) })) }
       await refetch()
       flash(`Sincronizado ✓ saldo ${d.current_value != null ? 'US$ ' + d.current_value.toFixed(2) : '—'} · taxas ${d.fees != null ? 'US$ ' + d.fees.toFixed(5) : 'indisponível'}`, 'ok')
     } catch { flash('Falha ao sincronizar. Tente de novo em instantes.', 'err') }
@@ -1011,7 +1024,7 @@ export default function DashboardApp({
           const lo = p.low_range || 0, hi = p.high_range || 0
           let chosen = cands[0]
           if (lo > 0 && hi > 0) { const ins = cands.find((r: number) => r >= lo * 0.5 && r <= hi * 1.5); if (ins) chosen = ins }
-          if (chosen) setPoolRatio(prev => ({ ...prev, [p.id!]: chosen }))
+          if (chosen) { setPoolRatio(prev => ({ ...prev, [p.id!]: chosen })); setPoolChain(prev => ({ ...prev, [p.id!]: chainInfo(d, chosen) })) }
           // grava saldo + taxas automaticamente se mudaram (evita write desnecessário)
           const upd: any = {}
           if (d.fees != null && Math.abs((d.fees || 0) - (p.fees || 0)) > 0.00001) upd.fees = d.fees
@@ -1178,9 +1191,12 @@ export default function DashboardApp({
             <div className="eyebrow">Minhas pools de liquidez</div>
             {pools.map(p => {
               const price = (p.id && poolRatio[p.id]) ? poolRatio[p.id] : (live[p.par1_cg_id]?.usd ?? 0)
-              const below = price > 0 && p.low_range > 0 && price < p.low_range
-              const above = price > 0 && p.high_range > 0 && price > p.high_range
-              const inRange = price > 0 && !below && !above && p.low_range > 0
+              const ch = p.id ? poolChain[p.id] : undefined
+              // com NFT sincronizado, o status vem dos ticks on-chain (não depende da unidade cadastrada)
+              const below = ch ? (!ch.inRange && price < p.low_range) : (price > 0 && p.low_range > 0 && price < p.low_range)
+              const above = ch ? (!ch.inRange && !below) : (price > 0 && p.high_range > 0 && price > p.high_range)
+              const inRange = ch ? ch.inRange : (price > 0 && !below && !above && p.low_range > 0)
+              const quoteUsd = ch?.quoteUsd ?? 1   // 1 = par 2 é stablecoin (comportamento antigo)
               const span = p.high_range - p.low_range
               const pos = (price > 0 && span > 0) ? Math.min(100, Math.max(0, (price - p.low_range) / span * 100)) : 50
               const nearEdge = inRange && (pos < 12 || pos > 88)
@@ -1220,7 +1236,7 @@ export default function DashboardApp({
                   <div className="poolval"><div className="num">{usd(p.current_value)}</div><div className={`num ${pnl >= 0 ? 'up' : 'down'}`}>{pct(pnlp)}</div></div>
                 </div>
                 <div className={`rangestatus ${inRange ? (nearEdge ? 'rs-warn' : 'rs-in') : 'rs-out'}`}>{inRange ? (nearEdge ? '⚠ PERTO DE SAIR DA FAIXA' : '✓ DENTRO DA FAIXA · gerando taxas') : below ? '▼ FORA — abaixo · sem taxas' : above ? '▲ FORA — acima · sem taxas' : 'faixa não definida'}</div>
-                <PoolChart par1={p.par1} par2={p.par2} cgId={p.par1_cg_id} poolId={p.id} price={price} low={p.low_range} high={p.high_range} currentValue={p.current_value} aporte={p.aporte} entryPrice={p.entry_price} />
+                <PoolChart par1={p.par1} par2={p.par2} cgId={p.par1_cg_id} poolId={p.id} price={price} low={p.low_range} high={p.high_range} currentValue={p.current_value} aporte={p.aporte} entryPrice={p.entry_price} quoteUsd={quoteUsd} nowAmounts={ch && ch.base != null && ch.quote != null ? { base: ch.base, quote: ch.quote } : undefined} />
                 {pd && has(3) && (<div className="pooltraction">
                   <div className="pt-cell"><span>TVL</span><b>{abbr(pd.tvl)}</b></div>
                   <div className="pt-cell"><span>Vol 24h</span><b>{abbr(pd.vol24)}</b></div>
@@ -1238,7 +1254,7 @@ export default function DashboardApp({
                   <div className="kv"><span className="k">Fee APR (bruto)</span><span className="v num">{fmt(apr)}%</span></div>
                   {feeAprLiq != null && (<div className="kv"><span className="k">APR líquido (fee + IL)</span><span className={`v num ${feeAprLiq >= 0 ? 'up' : 'down'}`}>{fmt(feeAprLiq)}%</span></div>)}
                   <div className="kv"><span className="k">Dias na pool</span><span className="v num">{dias}</span></div>
-                  {il && (<><div className="kv"><span className="k">{p.par1} vs. entrada ({usd(p.entry_price!)})</span><span className={`v num ${il.chg >= 0 ? 'up' : 'down'}`}>{pct(il.chg)}</span></div>
+                  {il && (<><div className="kv"><span className="k">{p.par1} vs. entrada ({quoteUsd !== 1 ? `${fmt(p.entry_price!, 5)} ${p.par2}` : usd(p.entry_price!)})</span><span className={`v num ${il.chg >= 0 ? 'up' : 'down'}`}>{pct(il.chg)}</span></div>
                   <div className="kv"><span className="k">IL estimado (vs. HODL)</span><span className="v num down">{fmt(il.il, 2)}%</span></div></>)}
                 </div>
                 {(() => {
@@ -2191,14 +2207,14 @@ export default function DashboardApp({
                   <p className="foot-note" style={{ textAlign: 'left', padding: 0, color: '#2BFFC6' }}>✓ Par 1: <b>{poolForm.par1}</b> · ID <b>{poolForm.par1_cg_id}</b> — preço e range vêm certos do mercado.</p>
                 </div>
               )}
-              <div className="grid2"><div className="field"><label>Símbolo Par 1</label><input value={poolForm.par1} onChange={e => setPoolForm({ ...poolForm, par1: e.target.value.toUpperCase() })} placeholder="ETH" /></div><div className="field"><label>Par 2 (estável)</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div></div>
+              <div className="grid2"><div className="field"><label>Símbolo Par 1</label><input value={poolForm.par1} onChange={e => setPoolForm({ ...poolForm, par1: e.target.value.toUpperCase() })} placeholder="ETH" /></div><div className="field"><label>Par 2</label><input value={poolForm.par2} onChange={e => setPoolForm({ ...poolForm, par2: e.target.value.toUpperCase() })} placeholder="USDC" /></div></div>
               <div className="grid2"><div className="field"><label>dApp</label><input value={poolForm.dapp} onChange={e => setPoolForm({ ...poolForm, dapp: e.target.value })} placeholder="Uniswap v3" /></div><div className="field"><label>Rede</label><input value={poolForm.rede} onChange={e => setPoolForm({ ...poolForm, rede: e.target.value })} placeholder="Base" /></div></div>
               <div className="field"><label>Data de entrada</label><input type="date" value={poolForm.entry_date} onChange={e => setPoolForm({ ...poolForm, entry_date: e.target.value })} /></div>
               <div className="grid2"><div className="field"><label>Range LOW (preço)</label><input inputMode="decimal" value={poolForm.low_range} onChange={e => setPoolForm({ ...poolForm, low_range: e.target.value })} /></div><div className="field"><label>Range HIGH (preço)</label><input inputMode="decimal" value={poolForm.high_range} onChange={e => setPoolForm({ ...poolForm, high_range: e.target.value })} /></div></div>
               <div className="field"><label>Preço do {poolForm.par1 || 'ativo'} na entrada (p/ IL)</label><input inputMode="decimal" value={poolForm.entry_price ?? ''} onChange={e => setPoolForm({ ...poolForm, entry_price: e.target.value })} placeholder="ex: 2100" /></div>
               <div className="grid2"><div className="field"><label>Aporte U$</label><input inputMode="decimal" value={poolForm.aporte} onChange={e => setPoolForm({ ...poolForm, aporte: e.target.value })} /></div><div className="field"><label>Saldo atual U$</label><input inputMode="decimal" value={poolForm.current_value} onChange={e => setPoolForm({ ...poolForm, current_value: e.target.value })} /></div></div>
               <div className="grid2"><div className="field"><label>Taxas geradas U$</label><input inputMode="decimal" value={poolForm.fees} onChange={e => setPoolForm({ ...poolForm, fees: e.target.value })} /></div><div className="field"><label>Link da pool</label><input value={poolForm.link} onChange={e => setPoolForm({ ...poolForm, link: e.target.value })} placeholder="https://..." /></div></div>
-              <div className="grid2"><div className="field"><label>Rede (p/ estatísticas)</label><input value={poolForm.network || 'base'} onChange={e => setPoolForm({ ...poolForm, network: e.target.value })} placeholder="base" /></div><div className="field"><label>Endereço da pool (tração)</label><input value={poolForm.pool_address || ''} onChange={e => setPoolForm({ ...poolForm, pool_address: e.target.value })} placeholder="0x... (opcional)" /></div></div>
+              <div className="grid2"><div className="field"><label>Rede on-chain (base, bsc, arbitrum, ethereum)</label><input value={poolForm.network || 'base'} onChange={e => setPoolForm({ ...poolForm, network: e.target.value.trim().toLowerCase() })} placeholder="base" /></div><div className="field"><label>Endereço da pool (tração)</label><input value={poolForm.pool_address || ''} onChange={e => setPoolForm({ ...poolForm, pool_address: e.target.value })} placeholder="0x... (opcional)" /></div></div>
               <div className="grid2"><div className="field"><label>ID da posição (p/ sincronizar taxas)</label><input value={poolForm.position_id || ''} onChange={e => setPoolForm({ ...poolForm, position_id: e.target.value })} placeholder="ex: 3831528 (NFT ID)" /></div><div className="field" /></div>
               <div className="grid2" style={{ marginTop: 16 }}>{poolForm.id && <button className="t-btn ghost danger" onClick={() => delPool(poolForm.id)}>Excluir</button>}<button className="t-btn ghost" onClick={() => setPoolForm(null)}>Cancelar</button><button className="t-btn" onClick={savePool}>Salvar</button></div>
             </div></div>

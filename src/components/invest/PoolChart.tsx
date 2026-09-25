@@ -5,6 +5,8 @@ type Props = {
   par1: string; par2: string; cgId: string; poolId?: string
   price: number; low: number; high: number
   currentValue: number; aporte: number; entryPrice?: number
+  quoteUsd?: number                           // preço USD do par 2 (1 = stablecoin)
+  nowAmounts?: { base: number; quote: number } // quantidades reais on-chain (se sincronizado)
 }
 
 const usd = (n: number) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -24,7 +26,7 @@ function split(P: number, pa: number, pb: number) {
 
 type PnlPoint = { date: string; pnl: number; fees: number; divLoss: number }
 
-export default function PoolChart({ par1, par2, cgId, poolId, price, low, high, currentValue, aporte, entryPrice }: Props) {
+export default function PoolChart({ par1, par2, cgId, poolId, price, low, high, currentValue, aporte, entryPrice, quoteUsd = 1, nowAmounts }: Props) {
   const [prices, setPrices] = useState<number[] | null>(null)
   const [hist, setHist] = useState<PnlPoint[] | null>(null)
   const [tab, setTab] = useState<'liq' | 'pnl' | 'price'>('liq')
@@ -104,12 +106,17 @@ export default function PoolChart({ par1, par2, cgId, poolId, price, low, high, 
       <div className="pcr-sec" style={{ marginTop: 14 }}>Ativos na posição</div>
       <div className="pcr-assets">
         <div className="pcr-arow"><span className="pcr-lab">Agora</span>
-          <span>{fmt(currentValue * cur.vol / 100 / (price || 1), 5)} {par1} <b>({usd(currentValue * cur.vol / 100)})</b></span>
-          <span>{fmt(currentValue * cur.stb / 100, 2)} {par2} <b>({usd(currentValue * cur.stb / 100)})</b></span>
+          {nowAmounts ? (<>
+            <span>{fmt(nowAmounts.base, 5)} {par1} <b>({usd(nowAmounts.base * price * quoteUsd)})</b></span>
+            <span>{fmt(nowAmounts.quote, 5)} {par2} <b>({usd(nowAmounts.quote * quoteUsd)})</b></span>
+          </>) : (<>
+            <span>{fmt(currentValue * cur.vol / 100 / ((price || 1) * quoteUsd), 5)} {par1} <b>({usd(currentValue * cur.vol / 100)})</b></span>
+            <span>{fmt(currentValue * cur.stb / 100 / quoteUsd, quoteUsd !== 1 ? 5 : 2)} {par2} <b>({usd(currentValue * cur.stb / 100)})</b></span>
+          </>)}
         </div>
         {ent && (<div className="pcr-arow"><span className="pcr-lab">Entrada</span>
-          <span>{fmt(aporte * ent.vol / 100 / entryPrice!, 5)} {par1} <b>({usd(aporte * ent.vol / 100)})</b></span>
-          <span>{fmt(aporte * ent.stb / 100, 2)} {par2} <b>({usd(aporte * ent.stb / 100)})</b></span>
+          <span>{fmt(aporte * ent.vol / 100 / (entryPrice! * quoteUsd), 5)} {par1} <b>({usd(aporte * ent.vol / 100)})</b></span>
+          <span>{fmt(aporte * ent.stb / 100 / quoteUsd, quoteUsd !== 1 ? 5 : 2)} {par2} <b>({usd(aporte * ent.stb / 100)})</b></span>
         </div>)}
       </div>
 

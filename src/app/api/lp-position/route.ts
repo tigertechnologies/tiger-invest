@@ -12,16 +12,25 @@ const RPCS: Record<string, string[]> = {
   base: ['https://base-rpc.publicnode.com', 'https://base.llamarpc.com', 'https://1rpc.io/base', 'https://mainnet.base.org'],
   ethereum: ['https://ethereum-rpc.publicnode.com', 'https://eth.llamarpc.com', 'https://1rpc.io/eth'],
   arbitrum: ['https://arbitrum-one-rpc.publicnode.com', 'https://arb1.arbitrum.io/rpc', 'https://1rpc.io/arb'],
+  bsc: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.bnbchain.org', 'https://1rpc.io/bnb'],
+}
+// aceita o que o usuário digitar no campo "Rede" ("BNB Chain", "bnb", "bsc"…) e normaliza
+const NET_ALIAS: Record<string, string> = { bnb: 'bsc', 'bnb chain': 'bsc', bnbchain: 'bsc', binance: 'bsc', 'bnb smart chain': 'bsc', eth: 'ethereum', mainnet: 'ethereum', arb: 'arbitrum' }
+function normNetwork(n: string | null | undefined): string {
+  const k = (n || 'base').trim().toLowerCase()
+  return NET_ALIAS[k] || k
 }
 const NPM: Record<string, string> = {
   base: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
   ethereum: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
   arbitrum: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
+  bsc: '0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613',
 }
 const FACTORY: Record<string, string> = {
   base: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
   ethereum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
   arbitrum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
+  bsc: '0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7',
 }
 
 const SEL_DECIMALS   = '0x313ce567' // decimals()
@@ -37,6 +46,11 @@ const TOKENS: Record<string, { symbol: string; decimals: number; cg: string }> =
   '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf': { symbol: 'CBBTC', decimals: 8, cg: 'coinbase-wrapped-btc' },
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6, cg: 'usd-coin' },
   '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': { symbol: 'USDT', decimals: 6, cg: 'tether' },
+  // BNB Chain
+  '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': { symbol: 'WBNB', decimals: 18, cg: 'binancecoin' },
+  '0x1fa4a73a3f0133f0025378af00236f3abdee5d63': { symbol: 'NEAR', decimals: 18, cg: 'near' },
+  '0x55d398326f99059ff775485246999027b3197955': { symbol: 'USDT', decimals: 18, cg: 'tether' },
+  '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d': { symbol: 'USDC', decimals: 18, cg: 'usd-coin' },
 }
 
 const Q128 = 1n << 128n
@@ -112,7 +126,7 @@ function feeGrowthInside(
 }
 
 // preço USD por CONTRATO (CoinGecko) — funciona pra qualquer token, não só os do mapa
-const CG_PLAT: Record<string, string> = { base: 'base', ethereum: 'ethereum', arbitrum: 'arbitrum-one' }
+const CG_PLAT: Record<string, string> = { base: 'base', ethereum: 'ethereum', arbitrum: 'arbitrum-one', bsc: 'binance-smart-chain' }
 async function priceByContract(network: string, addrs: string[]): Promise<Record<string, number>> {
   const plat = CG_PLAT[network] || 'base'
   const list = Array.from(new Set(addrs.map(a => a.toLowerCase()))).filter(Boolean)
@@ -148,7 +162,7 @@ async function resolvePrices(origin: string, network: string, toks: { addr: stri
 
 export async function GET(request: Request) {
   const u = new URL(request.url)
-  const network = (u.searchParams.get('network') || 'base').toLowerCase()
+  const network = normNetwork(u.searchParams.get('network'))
   const id = u.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
   const rpc = RPCS[network], npm = NPM[network], factory = FACTORY[network]
@@ -223,13 +237,18 @@ export async function GET(request: Request) {
 
     // valor atual da posição
     let current_value: number | null = null
+    let amt0: number | null = null, amt1: number | null = null
     if (sqrtP > 0 && liquidity > 0n) {
       const sqrtA = sqrtPriceX96FromTick(tickLower)
       const sqrtB = sqrtPriceX96FromTick(tickUpper)
       const { a0, a1 } = amountsFromLiquidity(Number(liquidity), sqrtP, sqrtA, sqrtB)
-      const amt0 = a0 / 10 ** t0.decimals, amt1 = a1 / 10 ** t1.decimals
+      amt0 = a0 / 10 ** t0.decimals; amt1 = a1 / 10 ** t1.decimals
       current_value = amt0 * (px[t0.addr] || 0) + amt1 * (px[t1.addr] || 0)
     }
+    // status de faixa pela fonte da verdade (ticks) — não depende da unidade que o usuário cadastrou
+    const in_range = tickCurrent >= tickLower && tickCurrent < tickUpper
+    const decAdj = 10 ** t0.decimals / 10 ** t1.decimals
+    const range_t1_per_t0 = { low: Math.pow(1.0001, tickLower) * decAdj, high: Math.pow(1.0001, tickUpper) * decAdj }
 
     const sp = sqrtP / 2 ** 96
     const ratio_t1_per_t0 = sp * sp * 10 ** t0.decimals / 10 ** t1.decimals
@@ -245,6 +264,9 @@ export async function GET(request: Request) {
       current_value: current_value != null ? Math.round(current_value * 100) / 100 : null,
       priced: havePrice,
       token0: t0.symbol, token1: t1.symbol,
+      network, in_range, tick: tickCurrent, tickLower, tickUpper, range_t1_per_t0,
+      amount0: amt0, amount1: amt1,
+      price0_usd: px[t0.addr] || null, price1_usd: px[t1.addr] || null,
       ratio_t1_per_t0, ratio_t0_per_t1,
       note: 'taxas pendentes+materializadas e saldo calculados on-chain',
     })
