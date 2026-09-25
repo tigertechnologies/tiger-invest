@@ -11,6 +11,8 @@ type Props = {
 
 const usd = (n: number) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmt = (n: number, d = 2) => (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d })
+// preço adaptativo: razões pequenas (ex.: 0,00656 WBNB/NEAR) não podem virar "0,01"
+const fmtP = (n: number) => fmt(n, Math.abs(n) > 0 && Math.abs(n) < 1 ? 5 : 2)
 
 // v3: fração de valor em cada ativo dado preço P e faixa [pa,pb]
 function split(P: number, pa: number, pb: number) {
@@ -97,10 +99,10 @@ export default function PoolChart({ par1, par2, cgId, poolId, price, low, high, 
           {liqDist.bars.map((b, i) => (
             <div key={i} className={`pcr-bar ${b.inside ? 'in' : 'out'} ${b.active ? 'act' : ''}`} style={{ height: b.inside ? '100%' : '28%' }} />
           ))}
-          <div className="pcr-cur" style={{ left: `${liqDist.xCur}%` }} title={`preço ${fmt(price)}`} />
+          <div className="pcr-cur" style={{ left: `${liqDist.xCur}%` }} title={`preço ${fmtP(price)}`} />
         </div>
       )}
-      <div className="pcr-axis"><span>{fmt(low)}</span><span className={inRange ? 'in' : 'out'}>{price > 0 ? fmt(price) : '—'}</span><span>{fmt(high)}</span></div>
+      <div className="pcr-axis"><span>{fmtP(low)}</span><span className={inRange ? 'in' : 'out'}>{price > 0 ? fmtP(price) : '—'}</span><span>{fmtP(high)}</span></div>
 
       {/* Ativos na posição */}
       <div className="pcr-sec" style={{ marginTop: 14 }}>Ativos na posição</div>
